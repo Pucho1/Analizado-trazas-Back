@@ -3,6 +3,11 @@ from datetime import timedelta
 # Prefix under which every v1 endpoint is mounted.
 API_V1_PREFIX = "/api/v1"
 
+# CORS. The API is read-only and has no login yet, so only GET without credentials.
+CORS_ALLOWED_METHODS = ("GET",)
+# A browser origin: scheme, host and optional port; no wildcard, path or trailing slash.
+CORS_ORIGIN_PATTERN = r"https?://[^/\s:*]+(:\d+)?"
+
 # Name given to traces whose source does not report one (e.g. their root span never arrived).
 UNNAMED_TRACE_NAME = "(unnamed)"
 
