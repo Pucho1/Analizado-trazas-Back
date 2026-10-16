@@ -59,6 +59,7 @@ def map_traces(observations: Iterable[LangfuseObservation]) -> list[Trace]:
 
 
 def _to_trace(trace_id: str, observations: Sequence[LangfuseObservation]) -> Trace:
+    """Build one `Trace` from all the observations sharing `trace_id`."""
     usages = [observation.usage_details or {} for observation in observations]
     input_tokens = sum(usage.get("input", 0) for usage in usages)
     output_tokens = sum(usage.get("output", 0) for usage in usages)
@@ -78,6 +79,7 @@ def _to_trace(trace_id: str, observations: Sequence[LangfuseObservation]) -> Tra
 
 
 def _trace_name(observations: Sequence[LangfuseObservation]) -> str:
+    """Name of the trace taken from its root observation, or `UNNAMED_TRACE_NAME`."""
     root = next((obs for obs in observations if obs.is_root_observation), None)
     if root is None:
         return UNNAMED_TRACE_NAME
@@ -85,6 +87,7 @@ def _trace_name(observations: Sequence[LangfuseObservation]) -> str:
 
 
 def _latency(observations: Sequence[LangfuseObservation]) -> float | None:
+    """Seconds from the earliest start to the latest end; None if nothing has ended."""
     ends: list[datetime] = [obs.end_time for obs in observations if obs.end_time is not None]
     if not ends:
         return None
@@ -93,6 +96,7 @@ def _latency(observations: Sequence[LangfuseObservation]) -> float | None:
 
 
 def _total_tokens(usage: Mapping[str, int]) -> int:
+    """Reported `total` of one observation, or input + output when it is missing."""
     if "total" in usage:
         return usage["total"]
     return usage.get("input", 0) + usage.get("output", 0)

@@ -41,9 +41,11 @@ class LangfuseTraceSource:
     """`TraceSource` backed by the Langfuse public API (v2 observations)."""
 
     def __init__(self, http_client: httpx2.AsyncClient) -> None:
+        """Use an HTTP client already pointed at Langfuse and authenticated."""
         self._http_client = http_client
 
     async def list_traces(self, start: datetime, end: datetime) -> Sequence[Trace]:
+        """Return the traces that started within [start, end] (see `TraceSource`)."""
         observations = await self._fetch_observations(start - LANGFUSE_FETCH_MARGIN, end)
         try:
             traces = map_traces(observations)
@@ -54,6 +56,7 @@ class LangfuseTraceSource:
     async def _fetch_observations(
         self, start: datetime, end: datetime
     ) -> list[LangfuseObservation]:
+        """Fetch every observation that started in [start, end], following the cursor."""
         observations: list[LangfuseObservation] = []
         cursor: str | None = None
         while True:
@@ -66,6 +69,7 @@ class LangfuseTraceSource:
     async def _fetch_page(
         self, start: datetime, end: datetime, cursor: str | None
     ) -> LangfuseObservationsPage:
+        """Fetch one page of observations, translating HTTP failures into domain errors."""
         params = {
             "fields": LANGFUSE_OBSERVATION_FIELDS,
             "fromStartTime": _to_iso(start),
@@ -89,4 +93,5 @@ class LangfuseTraceSource:
 
 
 def _to_iso(moment: datetime) -> str:
+    """Format a datetime as ISO 8601 in UTC with a `Z` suffix, as Langfuse expects."""
     return moment.astimezone(UTC).isoformat().replace("+00:00", "Z")

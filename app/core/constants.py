@@ -1,5 +1,8 @@
 from datetime import timedelta
 
+# Prefix under which every v1 endpoint is mounted.
+API_V1_PREFIX = "/api/v1"
+
 # Name given to traces whose source does not report one (e.g. their root span never arrived).
 UNNAMED_TRACE_NAME = "(unnamed)"
 

@@ -15,6 +15,7 @@ class TimeRange(StrEnum):
 
     @property
     def duration(self) -> timedelta:
+        """Length of the window."""
         return _TIME_RANGE_DURATIONS[self]
 
 
@@ -43,6 +44,7 @@ class Trace:
     total_tokens: int
 
     def __post_init__(self) -> None:
+        """Reject naive timestamps and negative latency, cost or token counts."""
         if self.timestamp.utcoffset() is None:
             raise ValueError("Trace timestamp must be timezone-aware")
         if self.latency is not None and self.latency < 0:
@@ -68,6 +70,7 @@ class Summary:
 
     @classmethod
     def from_traces(cls, traces: Sequence[Trace]) -> Summary:
+        """Aggregate the given traces; an empty sequence yields zeros and no latency."""
         latencies = [trace.latency for trace in traces if trace.latency is not None]
         return cls(
             trace_count=len(traces),

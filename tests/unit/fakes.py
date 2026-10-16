@@ -18,6 +18,7 @@ def make_trace(
     output_tokens: int = 5,
     total_tokens: int | None = None,
 ) -> Trace:
+    """Build a valid `Trace` with sensible defaults; `total_tokens` defaults to in + out."""
     return Trace(
         id=id,
         timestamp=timestamp,
@@ -34,10 +35,12 @@ class InMemoryTraceSource:
     """TraceSource backed by a fixed list; records the windows it was asked for."""
 
     def __init__(self, traces: Sequence[Trace] = ()) -> None:
+        """Serve `traces`; `calls` starts empty."""
         self._traces = list(traces)
         self.calls: list[tuple[datetime, datetime]] = []
 
     async def list_traces(self, start: datetime, end: datetime) -> Sequence[Trace]:
+        """Record the window and return the stored traces that fall within it."""
         self.calls.append((start, end))
         return [trace for trace in self._traces if start <= trace.timestamp <= end]
 
@@ -46,7 +49,9 @@ class FailingTraceSource:
     """TraceSource that always raises the given error."""
 
     def __init__(self, error: Exception) -> None:
+        """Raise `error` on every call."""
         self._error = error
 
     async def list_traces(self, start: datetime, end: datetime) -> Sequence[Trace]:
+        """Raise the configured error."""
         raise self._error
