@@ -6,7 +6,7 @@ from app.api.v1.dependencies import get_trace_service
 from app.application.trace_service import TraceService
 from app.core.config import Settings
 from app.main import create_app
-from tests.unit.fakes import InMemoryTraceSource
+from tests.unit.fakes import REQUIRED_SETTINGS, InMemoryTraceRepository
 
 ALLOWED_ORIGIN = "http://localhost:5173"
 OTHER_ORIGIN = "http://evil.test"
@@ -14,21 +14,16 @@ PATH = "/api/v1/traces/summary"
 
 
 def make_settings(cors_allowed_origins: list[str]) -> Settings:
-    """Build test settings with the given CORS origins and dummy Langfuse credentials."""
+    """Build test settings with the given CORS origins and dummy credentials."""
     return Settings.model_validate(
-        {
-            "langfuse_public_key": "pk-lf-test",
-            "langfuse_secret_key": "sk-lf-test",
-            "langfuse_host": "https://langfuse.test",
-            "cors_allowed_origins": cors_allowed_origins,
-        }
+        {**REQUIRED_SETTINGS, "cors_allowed_origins": cors_allowed_origins}
     )
 
 
 @pytest.fixture
 def client() -> TestClient:
     app = create_app(make_settings([ALLOWED_ORIGIN]))
-    app.dependency_overrides[get_trace_service] = lambda: TraceService(InMemoryTraceSource())
+    app.dependency_overrides[get_trace_service] = lambda: TraceService(InMemoryTraceRepository())
     return TestClient(app)
 
 
@@ -40,14 +35,15 @@ def test_allowed_origin_receives_cors_header(client: TestClient) -> None:
     assert "access-control-allow-credentials" not in response.headers
 
 
-def test_preflight_from_allowed_origin_allows_get(client: TestClient) -> None:
+@pytest.mark.parametrize("method", ["GET", "POST"])
+def test_preflight_from_allowed_origin_allows_get_and_post(client: TestClient, method: str) -> None:
     response = client.options(
-        PATH, headers={"Origin": ALLOWED_ORIGIN, "Access-Control-Request-Method": "GET"}
+        PATH, headers={"Origin": ALLOWED_ORIGIN, "Access-Control-Request-Method": method}
     )
 
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == ALLOWED_ORIGIN
-    assert response.headers["access-control-allow-methods"] == "GET"
+    assert response.headers["access-control-allow-methods"] == "GET, POST"
 
 
 def test_other_origin_gets_no_cors_header(client: TestClient) -> None:
@@ -65,22 +61,17 @@ def test_preflight_from_other_origin_is_rejected(client: TestClient) -> None:
     assert "access-control-allow-origin" not in response.headers
 
 
-def test_preflight_for_write_method_is_rejected(client: TestClient) -> None:
+@pytest.mark.parametrize("method", ["PUT", "PATCH", "DELETE"])
+def test_preflight_for_other_methods_is_rejected(client: TestClient, method: str) -> None:
     response = client.options(
-        PATH, headers={"Origin": ALLOWED_ORIGIN, "Access-Control-Request-Method": "POST"}
+        PATH, headers={"Origin": ALLOWED_ORIGIN, "Access-Control-Request-Method": method}
     )
 
     assert response.status_code == 400
 
 
 def test_no_origins_are_allowed_by_default() -> None:
-    settings = Settings.model_validate(
-        {
-            "langfuse_public_key": "pk-lf-test",
-            "langfuse_secret_key": "sk-lf-test",
-            "langfuse_host": "https://langfuse.test",
-        },
-    )
+    settings = Settings.model_validate(REQUIRED_SETTINGS)
 
     assert settings.cors_allowed_origins == []
 

@@ -7,17 +7,34 @@ from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
 from app.api.v1.schemas import ErrorCode, ErrorDetail, ErrorResponse
-from app.core.exceptions import TraceSourceAuthenticationError, TraceSourceError
+from app.core.exceptions import (
+    RepositoryError,
+    SyncAlreadyRunningError,
+    TraceSourceAuthenticationError,
+    TraceSourceError,
+)
 
 logger = logging.getLogger(__name__)
 
-# Documented in OpenAPI on every route that reads from the trace source.
-TRACE_SOURCE_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+# OpenAPI documentation of the errors each group of routes can return.
+DATABASE_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    status.HTTP_503_SERVICE_UNAVAILABLE: {
+        "model": ErrorResponse,
+        "description": "`database_unavailable`: Observa's database cannot be reached.",
+    },
+}
+SYNC_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    **DATABASE_ERROR_RESPONSES,
+    status.HTTP_409_CONFLICT: {
+        "model": ErrorResponse,
+        "description": "`sync_already_running`: another synchronisation is in progress.",
+    },
     status.HTTP_502_BAD_GATEWAY: {
         "model": ErrorResponse,
         "description": (
-            "The trace source failed. `trace_source_auth_failed` means the configured "
-            "credentials were rejected; `trace_source_unavailable` covers any other failure."
+            "Langfuse failed. `trace_source_auth_failed` means the configured "
+            "credentials were rejected; `trace_source_unavailable` covers any other failure. "
+            "The failed run is still recorded (see `GET /sync`)."
         ),
     },
 }
@@ -31,6 +48,8 @@ def register_exception_handlers(app: FastAPI) -> None:
     """
     app.add_exception_handler(TraceSourceAuthenticationError, _handle_auth_error)
     app.add_exception_handler(TraceSourceError, _handle_source_error)
+    app.add_exception_handler(RepositoryError, _handle_repository_error)
+    app.add_exception_handler(SyncAlreadyRunningError, _handle_sync_already_running)
 
 
 async def _handle_auth_error(request: Request, exc: Exception) -> JSONResponse:
@@ -50,6 +69,25 @@ async def _handle_source_error(request: Request, exc: Exception) -> JSONResponse
         status.HTTP_502_BAD_GATEWAY,
         ErrorCode.TRACE_SOURCE_UNAVAILABLE,
         "The trace source is unavailable or returned invalid data.",
+    )
+
+
+async def _handle_repository_error(request: Request, exc: Exception) -> JSONResponse:
+    """Respond 503 when the database cannot be used."""
+    logger.error("Database unavailable: %s", exc, exc_info=exc)
+    return _error_response(
+        status.HTTP_503_SERVICE_UNAVAILABLE,
+        ErrorCode.DATABASE_UNAVAILABLE,
+        "The database is unavailable.",
+    )
+
+
+async def _handle_sync_already_running(request: Request, exc: Exception) -> JSONResponse:
+    """Respond 409 when a sync is requested while another one runs."""
+    return _error_response(
+        status.HTTP_409_CONFLICT,
+        ErrorCode.SYNC_ALREADY_RUNNING,
+        "A synchronisation is already running.",
     )
 
 

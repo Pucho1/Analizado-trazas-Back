@@ -4,9 +4,14 @@ version = "0.1.0"
 description = "Observa backend: extracts and aggregates agent traces from Langfuse."
 requires-python = ">=3.14"
 dependencies = [
+    "alembic>=1.20.0",
+    "apscheduler>=3.11.3,<4",
+    "asyncpg>=0.32.0",
     "fastapi>=0.143.0",
     "httpx2>=2.13.1",
     "pydantic-settings>=2.15.0",
+    "sqlalchemy[asyncio]>=2.1.5",
+    "tzdata>=2026.5",
     "uvicorn[standard]>=0.54.0",
 ]
 
@@ -43,7 +48,12 @@ quote-style = "double"
 [tool.mypy]
 strict = true
 plugins = ["pydantic.mypy"]
-files = ["app", "tests"]
+files = ["app", "tests", "migrations"]
+
+# APScheduler 3 ships no type information.
+[[tool.mypy.overrides]]
+module = ["apscheduler.*"]
+ignore_missing_imports = true
 
 [tool.pydantic-mypy]
 init_forbid_extra = true

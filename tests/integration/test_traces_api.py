@@ -8,11 +8,11 @@ from fastapi.testclient import TestClient
 
 from app.api.v1.dependencies import get_trace_service
 from app.application.trace_service import TraceService
-from app.core.exceptions import TraceSourceAuthenticationError, TraceSourceError
+from app.core.exceptions import RepositoryError
 from app.domain.models import TimeRange
-from app.domain.ports import TraceSource
+from app.domain.ports import TraceRepository
 from app.main import create_app
-from tests.unit.fakes import FailingTraceSource, InMemoryTraceSource, make_trace
+from tests.unit.fakes import FailingTraces, InMemoryTraceRepository, make_trace
 
 NOW = datetime(2026, 1, 15, 12, 0, tzinfo=UTC)
 
@@ -43,14 +43,16 @@ def app() -> Iterator[FastAPI]:
     application.dependency_overrides.clear()
 
 
-def use_source(app: FastAPI, source: TraceSource) -> TestClient:
-    """Wire `source` into the app with a fixed clock and return a client (no lifespan)."""
-    app.dependency_overrides[get_trace_service] = lambda: TraceService(source, clock=lambda: NOW)
+def use_repository(app: FastAPI, repository: TraceRepository) -> TestClient:
+    """Wire `repository` into the app with a fixed clock and return a client (no lifespan)."""
+    app.dependency_overrides[get_trace_service] = lambda: TraceService(
+        repository, clock=lambda: NOW
+    )
     return TestClient(app)
 
 
 def test_list_traces_returns_serialized_traces_most_recent_first(app: FastAPI) -> None:
-    client = use_source(app, InMemoryTraceSource([OLDER, NEWER]))
+    client = use_repository(app, InMemoryTraceRepository([OLDER, NEWER]))
 
     response = client.get("/api/v1/traces", params={"range": "24h"})
 
@@ -72,7 +74,7 @@ def test_list_traces_returns_serialized_traces_most_recent_first(app: FastAPI) -
 
 
 def test_summary_returns_aggregated_metrics(app: FastAPI) -> None:
-    client = use_source(app, InMemoryTraceSource([OLDER, NEWER]))
+    client = use_repository(app, InMemoryTraceRepository([OLDER, NEWER]))
 
     response = client.get("/api/v1/traces/summary", params={"range": "7d"})
 
@@ -87,7 +89,7 @@ def test_summary_returns_aggregated_metrics(app: FastAPI) -> None:
 
 
 def test_summary_of_empty_range(app: FastAPI) -> None:
-    client = use_source(app, InMemoryTraceSource())
+    client = use_repository(app, InMemoryTraceRepository())
 
     response = client.get("/api/v1/traces/summary")
 
@@ -103,8 +105,8 @@ def test_summary_of_empty_range(app: FastAPI) -> None:
 
 @pytest.mark.parametrize("path", ["/api/v1/traces", "/api/v1/traces/summary"])
 def test_range_defaults_to_last_24_hours(app: FastAPI, path: str) -> None:
-    source = InMemoryTraceSource()
-    client = use_source(app, source)
+    source = InMemoryTraceRepository()
+    client = use_repository(app, source)
 
     response = client.get(path)
 
@@ -116,8 +118,8 @@ def test_range_defaults_to_last_24_hours(app: FastAPI, path: str) -> None:
 @pytest.mark.parametrize("time_range", list(TimeRange))
 @pytest.mark.parametrize("path", ["/api/v1/traces", "/api/v1/traces/summary"])
 def test_range_selects_window_ending_now(app: FastAPI, path: str, time_range: TimeRange) -> None:
-    source = InMemoryTraceSource()
-    client = use_source(app, source)
+    source = InMemoryTraceRepository()
+    client = use_repository(app, source)
 
     client.get(path, params={"range": time_range.value})
 
@@ -126,8 +128,8 @@ def test_range_selects_window_ending_now(app: FastAPI, path: str, time_range: Ti
 
 @pytest.mark.parametrize("path", ["/api/v1/traces", "/api/v1/traces/summary"])
 def test_invalid_range_is_rejected(app: FastAPI, path: str) -> None:
-    source = InMemoryTraceSource()
-    client = use_source(app, source)
+    source = InMemoryTraceRepository()
+    client = use_repository(app, source)
 
     response = client.get(path, params={"range": "1y"})
 
@@ -135,25 +137,17 @@ def test_invalid_range_is_rejected(app: FastAPI, path: str) -> None:
     assert source.calls == []
 
 
-@pytest.mark.parametrize(
-    ("error", "code"),
-    [
-        (TraceSourceAuthenticationError("bad keys pk-lf-123"), "trace_source_auth_failed"),
-        (TraceSourceError("Langfuse responded with HTTP 500"), "trace_source_unavailable"),
-    ],
-)
 @pytest.mark.parametrize("path", ["/api/v1/traces", "/api/v1/traces/summary"])
-def test_trace_source_errors_map_to_bad_gateway(
-    app: FastAPI, path: str, error: Exception, code: str
-) -> None:
-    client = use_source(app, FailingTraceSource(error))
+def test_database_errors_map_to_service_unavailable(app: FastAPI, path: str) -> None:
+    error = RepositoryError("connection to 127.0.0.1:5432 refused")
+    client = use_repository(app, FailingTraces(error))
 
     response = client.get(path)
 
-    assert response.status_code == 502
+    assert response.status_code == 503
     detail = response.json()["error"]
-    assert detail["code"] == code
-    assert str(error) not in detail["message"]
+    assert detail["code"] == "database_unavailable"
+    assert "5432" not in detail["message"]
 
 
 def test_openapi_documents_trace_endpoints(app: FastAPI) -> None:
@@ -163,4 +157,4 @@ def test_openapi_documents_trace_endpoints(app: FastAPI) -> None:
         operation = schema["paths"][path]["get"]
         (parameter,) = operation["parameters"]
         assert parameter["name"] == "range"
-        assert {"200", "422", "502"} <= set(operation["responses"])
+        assert set(operation["responses"]) == {"200", "422", "503"}

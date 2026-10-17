@@ -1,16 +1,19 @@
-"""`/traces` endpoints: list of traces and their summary over a time range."""
+"""`/traces` endpoints: list of traces and their summary over a time range.
+
+They read from Observa's database, which the synchronisation keeps up to date.
+"""
 
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 
 from app.api.v1.dependencies import get_trace_service
-from app.api.v1.errors import TRACE_SOURCE_ERROR_RESPONSES
+from app.api.v1.errors import DATABASE_ERROR_RESPONSES
 from app.api.v1.schemas import SummaryResponse, TraceListResponse
 from app.application.trace_service import TraceService
 from app.domain.models import TimeRange
 
-router = APIRouter(prefix="/traces", tags=["traces"], responses=TRACE_SOURCE_ERROR_RESPONSES)
+router = APIRouter(prefix="/traces", tags=["traces"], responses=DATABASE_ERROR_RESPONSES)
 
 TimeRangeQuery = Annotated[
     TimeRange,

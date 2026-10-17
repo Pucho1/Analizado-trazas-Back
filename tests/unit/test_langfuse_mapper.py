@@ -5,7 +5,8 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from app.core.constants import UNNAMED_TRACE_NAME
+from app.core.constants import DEFAULT_ENVIRONMENT, UNNAMED_TRACE_NAME
+from app.domain.models import Observation, ObservationLevel
 from app.infrastructure.langfuse.mapper import LangfuseObservation, map_traces
 from tests.unit.langfuse_samples import TRACE_ID, generation_json, observation_json, root_json
 
@@ -23,6 +24,13 @@ def test_maps_a_complete_trace() -> None:
     assert trace.latency == pytest.approx(5.358)
     assert trace.cost == Decimal("0.0001605")
     assert (trace.input_tokens, trace.output_tokens, trace.total_tokens) == (762, 77, 839)
+    assert trace.environment == "sdk-experiment"
+    assert trace.tags == ()
+    assert [observation.id for observation in trace.observations] == [
+        "obs-root",
+        "obs-generation",
+        "obs-span",
+    ]
 
 
 def test_sums_cost_and_tokens_across_generations() -> None:
@@ -145,6 +153,123 @@ def test_groups_observations_into_one_trace_each() -> None:
     assert traces[TRACE_ID].cost == Decimal("0.0001605")
 
 
+def test_environment_comes_from_root() -> None:
+    early_span = observation_json(startTime="2026-10-09T09:33:09.000Z", environment="staging")
+
+    (trace,) = map_traces(parse(early_span, root_json(environment="production")))
+
+    assert trace.environment == "production"
+
+
+def test_environment_falls_back_to_earliest_observation_without_root() -> None:
+    early = observation_json(id="early", startTime="2026-10-09T09:33:09.000Z", environment="dev")
+    late = generation_json(environment="production")
+
+    (trace,) = map_traces(parse(late, early))
+
+    assert trace.environment == "dev"
+
+
+@pytest.mark.parametrize("environment", [None, ""])
+def test_missing_environment_is_langfuse_default(environment: str | None) -> None:
+    (trace,) = map_traces(parse(root_json(environment=environment)))
+
+    assert trace.environment == DEFAULT_ENVIRONMENT
+
+
+def test_tags_are_the_sorted_union_of_every_observation() -> None:
+    observations = parse(
+        root_json(tags=["web", "rag"]),
+        generation_json(tags=["rag", "beta"]),
+        observation_json(tags=None),
+    )
+
+    (trace,) = map_traces(observations)
+
+    assert trace.tags == ("beta", "rag", "web")
+
+
+def test_maps_observation_metadata_in_start_order() -> None:
+    (trace,) = map_traces(parse(observation_json(), generation_json(), root_json()))
+
+    assert trace.observations == (
+        Observation(
+            id="obs-root",
+            name="experiment-item-run",
+            type="SPAN",
+            level=ObservationLevel.DEFAULT,
+            model=None,
+            start_time=datetime(2026, 10, 9, 9, 33, 9, 166000, tzinfo=UTC),
+        ),
+        Observation(
+            id="obs-generation",
+            name="ChatOpenAI",
+            type="GENERATION",
+            level=ObservationLevel.DEFAULT,
+            model="gpt-4o-mini-2024-07-18",
+            start_time=datetime(2026, 10, 9, 9, 33, 9, 265000, tzinfo=UTC),
+        ),
+        Observation(
+            id="obs-span",
+            name="route-query",
+            type="SPAN",
+            level=ObservationLevel.DEFAULT,
+            model=None,
+            start_time=datetime(2026, 10, 9, 9, 33, 9, 300000, tzinfo=UTC),
+        ),
+    )
+
+
+def test_observations_with_same_start_are_ordered_by_id() -> None:
+    same_start = "2026-10-09T09:33:09.300Z"
+    observations = parse(
+        observation_json(id="obs-b", startTime=same_start),
+        observation_json(id="obs-a", startTime=same_start),
+    )
+
+    (trace,) = map_traces(observations)
+
+    assert [observation.id for observation in trace.observations] == ["obs-a", "obs-b"]
+
+
+def test_empty_name_and_model_count_as_missing() -> None:
+    (trace,) = map_traces(parse(observation_json(name="", model="")))
+
+    (observation,) = trace.observations
+    assert (observation.name, observation.model) == (None, None)
+
+
+@pytest.mark.parametrize("level", list(ObservationLevel))
+def test_maps_every_level(level: ObservationLevel) -> None:
+    (trace,) = map_traces(parse(observation_json(level=level.value)))
+
+    assert trace.observations[0].level is level
+
+
+def test_missing_level_is_default() -> None:
+    payload = observation_json()
+    del payload["level"]
+
+    (trace,) = map_traces(parse(payload))
+
+    assert trace.observations[0].level is ObservationLevel.DEFAULT
+
+
+def test_rejects_unknown_level() -> None:
+    payload = observation_json(level="FATAL")
+
+    with pytest.raises(ValidationError):
+        parse(payload)
+
+
+def test_never_keeps_inputs_or_outputs() -> None:
+    payload = observation_json(input="secret question", output="secret answer")
+
+    (observation,) = parse(payload)
+
+    assert "secret" not in repr(observation)
+
+
 def test_skips_observations_without_trace() -> None:
     assert map_traces(parse(observation_json(traceId=None))) == []
 
@@ -154,5 +279,7 @@ def test_no_observations_means_no_traces() -> None:
 
 
 def test_rejects_timestamps_without_timezone() -> None:
+    payload = root_json(startTime="2026-10-09T09:33:09.166")
+
     with pytest.raises(ValidationError):
-        parse(root_json(startTime="2026-10-09T09:33:09.166"))
+        parse(payload)

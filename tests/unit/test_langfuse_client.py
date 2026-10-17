@@ -43,7 +43,9 @@ async def test_requests_v2_observations_with_margin_before_window() -> None:
     assert request.url.path == LANGFUSE_OBSERVATIONS_PATH
     assert request.url.params["fromStartTime"] == "2026-10-08T11:00:00Z"
     assert request.url.params["toStartTime"] == "2026-10-09T12:00:00Z"
-    assert set(request.url.params["fields"].split(",")) >= {"core", "basic", "usage"}
+    fields = set(request.url.params["fields"].split(","))
+    assert fields >= {"core", "basic", "usage", "trace_context", "model"}
+    assert "io" not in fields
     assert "cursor" not in request.url.params
 
 

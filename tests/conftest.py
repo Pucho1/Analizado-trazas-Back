@@ -9,7 +9,11 @@ os.environ.update(
         "LANGFUSE_PUBLIC_KEY": "pk-lf-test",
         "LANGFUSE_SECRET_KEY": "sk-lf-test",
         "LANGFUSE_HOST": "https://langfuse.test",
+        "POSTGRES_USER": "observa-test",
+        "POSTGRES_PASSWORD": "observa-test",
+        "POSTGRES_DB": "observa-test",
         "CORS_ALLOWED_ORIGINS": "[]",
+        "SYNC_ENABLED": "false",
     }
 )
 

@@ -17,6 +17,9 @@ def observation_json(**overrides: Any) -> dict[str, Any]:
         "type": "SPAN",
         "name": "route-query",
         "level": "DEFAULT",
+        "environment": "sdk-experiment",
+        "tags": [],
+        "model": "",
         "isRootObservation": False,
         "traceName": None,
         "totalCost": None,
@@ -28,6 +31,7 @@ def observation_json(**overrides: Any) -> dict[str, Any]:
 
 
 def root_json(**overrides: Any) -> dict[str, Any]:
+    """The root span of the trace, which carries `traceName`."""
     return observation_json(
         **{
             "id": "obs-root",
@@ -43,11 +47,13 @@ def root_json(**overrides: Any) -> dict[str, Any]:
 
 
 def generation_json(**overrides: Any) -> dict[str, Any]:
+    """An LLM call with model, usage and cost."""
     return observation_json(
         **{
             "id": "obs-generation",
             "type": "GENERATION",
             "name": "ChatOpenAI",
+            "model": "gpt-4o-mini-2024-07-18",
             "startTime": "2026-10-09T09:33:09.265Z",
             "endTime": "2026-10-09T09:33:12.084Z",
             "totalCost": 0.0001605,

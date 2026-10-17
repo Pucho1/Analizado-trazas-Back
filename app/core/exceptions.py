@@ -8,3 +8,11 @@ class TraceSourceError(ObservaError):
 
 class TraceSourceAuthenticationError(TraceSourceError):
     """The trace source rejected the configured credentials."""
+
+
+class RepositoryError(ObservaError):
+    """The database could not be reached or rejected an operation."""
+
+
+class SyncAlreadyRunningError(ObservaError):
+    """A synchronisation was requested while another one is still running."""

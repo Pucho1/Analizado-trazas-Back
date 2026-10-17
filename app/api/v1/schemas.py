@@ -10,7 +10,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
-from app.domain.models import Summary, TimeRange, Trace
+from app.application.sync_service import SyncState
+from app.domain.models import Summary, SyncRun, SyncStatus, SyncTrigger, TimeRange, Trace
 
 
 class TraceResponse(BaseModel):
@@ -83,6 +84,64 @@ class ErrorCode(StrEnum):
 
     TRACE_SOURCE_AUTH_FAILED = "trace_source_auth_failed"
     TRACE_SOURCE_UNAVAILABLE = "trace_source_unavailable"
+    DATABASE_UNAVAILABLE = "database_unavailable"
+    SYNC_ALREADY_RUNNING = "sync_already_running"
+
+
+class SyncRunResponse(BaseModel):
+    """One synchronisation from Langfuse into Observa's database."""
+
+    trigger: SyncTrigger = Field(description="`scheduled` (automatic) or `manual` (sync now).")
+    status: SyncStatus
+    started_at: datetime
+    finished_at: datetime
+    window_start: datetime = Field(description="Traces that started from this moment...")
+    window_end: datetime = Field(description="...up to this one were read.")
+    trace_count: int = Field(description="Traces read and stored (0 if the run failed).")
+    error_code: ErrorCode | None = Field(
+        description="Why the run failed; null if it succeeded. `trace_source_auth_failed` "
+        "means the Langfuse keys are wrong."
+    )
+
+    @classmethod
+    def from_domain(cls, run: SyncRun) -> SyncRunResponse:
+        """Build the response model from a domain `SyncRun`."""
+        return cls(
+            trigger=run.trigger,
+            status=run.status,
+            started_at=run.started_at,
+            finished_at=run.finished_at,
+            window_start=run.window_start,
+            window_end=run.window_end,
+            trace_count=run.trace_count,
+            error_code=None if run.failure_reason is None else ErrorCode(run.failure_reason),
+        )
+
+
+class SyncStateResponse(BaseModel):
+    """Whether a sync is running, the last run and the last successful one."""
+
+    running: bool
+    last_run: SyncRunResponse | None = Field(
+        description="Most recent run, successful or not; null if never synced."
+    )
+    last_successful_run: SyncRunResponse | None = Field(
+        description="Run up to which data is complete; null if no sync ever succeeded."
+    )
+
+    @classmethod
+    def from_domain(cls, state: SyncState) -> SyncStateResponse:
+        """Build the response model from the service's `SyncState`."""
+        return cls(
+            running=state.running,
+            last_run=_optional_run(state.last_run),
+            last_successful_run=_optional_run(state.last_successful_run),
+        )
+
+
+def _optional_run(run: SyncRun | None) -> SyncRunResponse | None:
+    """Response for `run`, or None."""
+    return None if run is None else SyncRunResponse.from_domain(run)
 
 
 class ErrorDetail(BaseModel):
