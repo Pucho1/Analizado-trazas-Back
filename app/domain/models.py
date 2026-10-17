@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -87,6 +87,114 @@ class Trace:
             raise ValueError("Trace cost must not be negative")
         if min(self.input_tokens, self.output_tokens, self.total_tokens) < 0:
             raise ValueError("Trace token counts must not be negative")
+
+
+@dataclass(frozen=True, slots=True)
+class TraceKey:
+    """The attributes of a stored trace that profiles classify on, plus its profile."""
+
+    id: str
+    environment: str
+    name: str
+    tags: tuple[str, ...]
+    profile_id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ProfileRule:
+    """Which traces belong to a profile.
+
+    A trace matches when its environment is `environment`, its name is `trace_name`
+    (any name if None) and it carries every tag in `tags` (it may carry more). Tags
+    are stored sorted and without repetitions.
+    """
+
+    environment: str
+    trace_name: str | None = None
+    tags: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        """Reject blank values and normalise the tags."""
+        if not self.environment.strip():
+            raise ValueError("A profile rule needs an environment")
+        if self.trace_name is not None and not self.trace_name.strip():
+            raise ValueError("A profile rule's trace name must not be blank")
+        if any(not tag.strip() for tag in self.tags):
+            raise ValueError("A profile rule's tags must not be blank")
+        object.__setattr__(self, "tags", tuple(sorted(set(self.tags))))
+
+    @property
+    def specificity(self) -> int:
+        """How many criteria beyond the environment the rule sets (name + each tag)."""
+        return (self.trace_name is not None) + len(self.tags)
+
+    def matches(self, trace: TraceKey) -> bool:
+        """Whether `trace` belongs to a profile with this rule."""
+        return (
+            trace.environment == self.environment
+            and (self.trace_name is None or trace.name == self.trace_name)
+            and set(self.tags) <= set(trace.tags)
+        )
+
+
+class ProfileStatus(StrEnum):
+    """Whether a profile is being monitored."""
+
+    ACTIVE = "active"
+    # No longer monitored; keeps its history and keeps receiving its new traces.
+    ARCHIVED = "archived"
+
+
+@dataclass(frozen=True, slots=True)
+class Profile:
+    """A group of traces that stands for one tool or agent, with a business name."""
+
+    id: int
+    name: str
+    rule: ProfileRule
+    status: ProfileStatus
+    created_at: datetime
+    archived_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        """Require a name and an archive date exactly when archived."""
+        if not self.name.strip():
+            raise ValueError("A profile needs a name")
+        if (self.status is ProfileStatus.ARCHIVED) != (self.archived_at is not None):
+            raise ValueError("A profile has an archive date if and only if it is archived")
+
+
+def classify(traces: Iterable[TraceKey], profiles: Sequence[Profile]) -> dict[str, int | None]:
+    """Profile id for each trace id; None means "unclassified".
+
+    When several profiles match, the most specific rule wins; on a tie, the oldest
+    profile. Archived profiles still classify their traces.
+    """
+    by_priority = sorted(
+        profiles, key=lambda profile: (-profile.rule.specificity, profile.created_at, profile.id)
+    )
+    return {
+        trace.id: next((profile.id for profile in by_priority if profile.rule.matches(trace)), None)
+        for trace in traces
+    }
+
+
+@dataclass(frozen=True, slots=True)
+class DiscoveredGroup:
+    """Unclassified traces sharing environment, name and tags: a candidate profile."""
+
+    environment: str
+    trace_name: str
+    tags: tuple[str, ...]
+    trace_count: int
+    first_seen: datetime
+    last_seen: datetime
+    total_cost: Decimal
+
+    @property
+    def rule(self) -> ProfileRule:
+        """The rule that would capture exactly this group."""
+        return ProfileRule(environment=self.environment, trace_name=self.trace_name, tags=self.tags)
 
 
 class SyncTrigger(StrEnum):

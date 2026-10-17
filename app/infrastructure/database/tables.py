@@ -15,16 +15,18 @@ from sqlalchemy import (
     Double,
     ForeignKey,
     Identity,
+    Index,
     Integer,
     MetaData,
     Numeric,
     Text,
+    func,
     text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-from app.domain.models import ObservationLevel, SyncStatus, SyncTrigger
+from app.domain.models import ObservationLevel, ProfileStatus, SyncStatus, SyncTrigger
 
 # Stable constraint and index names, so that migrations are reproducible.
 NAMING_CONVENTION = {
@@ -44,6 +46,7 @@ def _sql_values(values: Iterable[StrEnum]) -> str:
 _LEVELS_SQL = _sql_values(ObservationLevel)
 _TRIGGERS_SQL = _sql_values(SyncTrigger)
 _STATUSES_SQL = _sql_values(SyncStatus)
+_PROFILE_STATUSES_SQL = _sql_values(ProfileStatus)
 
 
 class Base(DeclarativeBase):
@@ -52,12 +55,39 @@ class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
 
 
+class ProfileRow(Base):
+    """A profile: a business name plus the rule that selects its traces."""
+
+    __tablename__ = "profiles"
+    __table_args__ = (
+        CheckConstraint(f"status IN ({_PROFILE_STATUSES_SQL})", name="status"),
+        # Names are unique ignoring case ("Web" and "web" are the same profile name).
+        Index("uq_profiles_name_lower", func.lower(text("name")), unique=True),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    name: Mapped[str] = mapped_column(Text)
+    environment: Mapped[str] = mapped_column(Text)
+    trace_name: Mapped[str | None] = mapped_column(Text)
+    tags: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default=text("'{}'"))
+    status: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class TraceRow(Base):
-    """One trace. `cost` is in USD and `latency` in seconds."""
+    """One trace. `cost` is in USD and `latency` in seconds.
+
+    `profile_id` is NULL while no profile captures the trace ("unclassified");
+    deleting a profile deletes its traces.
+    """
 
     __tablename__ = "traces"
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
+    profile_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("profiles.id", ondelete="CASCADE"), index=True
+    )
     name: Mapped[str] = mapped_column(Text)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     environment: Mapped[str] = mapped_column(Text, index=True)

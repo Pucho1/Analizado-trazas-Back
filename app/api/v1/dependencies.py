@@ -10,6 +10,7 @@ from typing import Annotated
 
 from fastapi import Depends, Request
 
+from app.application.profile_service import ProfileService
 from app.application.sync_service import SyncService
 from app.application.trace_service import TraceService
 from app.core.config import Settings
@@ -33,6 +34,12 @@ def get_trace_service(
 ) -> TraceService:
     """Return the trace use cases, reading from the repository."""
     return TraceService(repository)
+
+
+def get_profile_service(request: Request) -> ProfileService:
+    """Return the profile use cases created by the application lifespan."""
+    service: ProfileService = request.app.state.profile_service
+    return service
 
 
 def get_sync_service(request: Request) -> SyncService:

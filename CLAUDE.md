@@ -25,15 +25,18 @@ backend/
 ├── app/
 │   ├── main.py                  # create_app, lifespan, CORS
 │   ├── core/                    # config.py, constants.py, exceptions.py
-│   ├── domain/                  # models.py (Trace, Observation, Summary, TimeRange, SyncRun...)
-│   │                            # ports.py (TraceSource, TraceRepository, SyncRunRepository)
-│   ├── application/             # trace_service.py (lectura), sync_service.py (sincronización)
+│   ├── domain/                  # models.py (Trace, Observation, Summary, TimeRange, SyncRun,
+│   │                            #   Profile, ProfileRule, classify, DiscoveredGroup...)
+│   │                            # ports.py (TraceSource, TraceRepository, SyncRunRepository,
+│   │                            #   ProfileRepository)
+│   ├── application/             # trace_service.py (lectura), sync_service.py (sincronización),
+│   │                            # profile_service.py (perfiles)
 │   ├── infrastructure/
 │   │   ├── langfuse/            # client.py, mapper.py
-│   │   ├── database/            # session.py, tables.py, errors.py,
-│   │   │                        # trace_repository.py, sync_run_repository.py
+│   │   ├── database/            # session.py, tables.py, errors.py, trace_repository.py,
+│   │   │                        # sync_run_repository.py, profile_repository.py
 │   │   └── scheduler.py         # APScheduler: escaneos diarios + escaneo inicial
-│   └── api/v1/                  # routes/traces.py, routes/sync.py, schemas.py,
+│   └── api/v1/                  # routes/{traces,sync,profiles}.py, schemas.py,
 │                                # dependencies.py, errors.py
 ├── migrations/                  # Alembic (env.py, versions/)
 ├── docker/postgres/init/        # crea observa_test al iniciar el volumen
@@ -50,15 +53,16 @@ backend/
 - `TraceRepository` (Protocol) guarda y lee trazas: `save_traces` (upsert idempotente; sustituye las observaciones) y `list_traces(start, end)`. `TraceService` (y por tanto los endpoints de trazas) lee solo de aquí.
 - `SyncRunRepository` (Protocol): historial de sincronizaciones; el marcador es la ejecución correcta con mayor `window_end`.
 - `SyncService`: ventana = marcador − `SYNC_OVERLAP` (1 h) hasta ahora (la primera vez, `SYNC_INITIAL_LOOKBACK_DAYS`); un fallo se registra con su `SyncFailureReason` y no avanza el marcador; un candado impide dos a la vez; `after_sync` es el punto de enganche para recalcular totales y comprobar umbrales.
-- El ciclo de vida (motor, cliente de Langfuse, repositorios, `SyncService` único y planificador) se monta en el `lifespan` de `main.py`; las dependencias de FastAPI los leen de `app.state`.
+- Perfiles: `ProfileRule` (entorno obligatorio, por defecto `production`; nombre de traza y tags opcionales; los tags de la regla deben estar todos en la traza). `classify()` (dominio puro) es la única fuente de la asignación: gana la regla más específica y, en empate, el perfil más antiguo; los archivados siguen clasificando. `ProfileService` reclasifica al crear/cambiar regla y tras cada sync (`after_sync`). `traces.profile_id` NULL = «Sin clasificar»; borrar un perfil borra sus trazas en cascada. El upsert de trazas nunca toca `profile_id`.
+- El ciclo de vida (motor, cliente de Langfuse, repositorios, `ProfileService`, `SyncService` único y planificador) se monta en el `lifespan` de `main.py`; las dependencias de FastAPI los leen de `app.state`.
 - Modelo `Trace`: id, timestamp, name, environment, latency, cost (USD, `Decimal`), input/output/total tokens, tags, observations.
 - Modelo `Observation`: id, name, type (texto libre), level (`ObservationLevel`), model, start_time. Solo metadatos, nunca input ni output.
-- Endpoints: `GET /api/v1/traces` y `GET /api/v1/traces/summary` (rango `24h`, `7d`, `30d`), `POST /api/v1/sync` (sincronizar ahora, síncrono) y `GET /api/v1/sync` (estado).
-- Errores propios del dominio mapeados a respuestas HTTP claras (`api/v1/errors.py`): 502 Langfuse, 503 base de datos, 409 sincronización en curso.
+- Endpoints: `GET /api/v1/traces` y `GET /api/v1/traces/summary` (rango `24h`, `7d`, `30d`), `POST /api/v1/sync` (sincronizar ahora, síncrono), `GET /api/v1/sync` (estado) y `/api/v1/profiles` (listar, descubrir, crear, `PATCH`, archivar/desarchivar, `DELETE`).
+- Errores propios del dominio mapeados a respuestas HTTP claras (`api/v1/errors.py`): 502 Langfuse, 503 base de datos, 409 sincronización en curso o nombre de perfil repetido, 404 perfil inexistente.
 
 ## Base de datos
 
-- Tablas `traces`, `observations` (FK con `ON DELETE CASCADE`) y `sync_runs`, definidas en `infrastructure/database/tables.py`. Nombres de restricciones fijos (naming convention).
+- Tablas `profiles` (nombre único sin distinguir mayúsculas), `traces` (`profile_id` FK con `ON DELETE CASCADE`), `observations` (FK con `ON DELETE CASCADE`) y `sync_runs`, definidas en `infrastructure/database/tables.py`. Nombres de restricciones fijos (naming convention).
 - Los repositorios convierten cualquier fallo de base de datos en `RepositoryError` (`database/errors.py`).
 - Cambios de esquema: editar `tables.py` → `uv run alembic revision --autogenerate -m "..."` → revisar → `uv run alembic upgrade head`. Enseñar el esquema antes de crear migraciones.
 - `migrations/env.py` toma la URL de `config.attributes["database_url"]` (tests) o de los `POSTGRES_*` del `.env`; nunca hay credenciales en `alembic.ini`.

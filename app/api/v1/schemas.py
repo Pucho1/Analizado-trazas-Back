@@ -7,11 +7,25 @@ computed with `Decimal` in the domain and only converted to JSON numbers here.
 
 from datetime import datetime
 from enum import StrEnum
+from typing import Annotated
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints, model_validator
 
+from app.application.profile_service import ProfileOverview
 from app.application.sync_service import SyncState
-from app.domain.models import Summary, SyncRun, SyncStatus, SyncTrigger, TimeRange, Trace
+from app.core.constants import MONITORED_ENVIRONMENT, PROFILE_NAME_MAX_LENGTH
+from app.domain.models import (
+    DiscoveredGroup,
+    Profile,
+    ProfileRule,
+    ProfileStatus,
+    Summary,
+    SyncRun,
+    SyncStatus,
+    SyncTrigger,
+    TimeRange,
+    Trace,
+)
 
 
 class TraceResponse(BaseModel):
@@ -86,6 +100,146 @@ class ErrorCode(StrEnum):
     TRACE_SOURCE_UNAVAILABLE = "trace_source_unavailable"
     DATABASE_UNAVAILABLE = "database_unavailable"
     SYNC_ALREADY_RUNNING = "sync_already_running"
+    PROFILE_NOT_FOUND = "profile_not_found"
+    PROFILE_NAME_TAKEN = "profile_name_taken"
+
+
+ProfileName = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=PROFILE_NAME_MAX_LENGTH),
+    Field(description="Business name, e.g. «Asistente de la web». Unique, ignoring case."),
+]
+NonBlank = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+class ProfileRuleSchema(BaseModel):
+    """Which traces belong to a profile: all criteria must hold."""
+
+    environment: NonBlank = Field(
+        default=MONITORED_ENVIRONMENT, description="Langfuse environment of the traces."
+    )
+    trace_name: NonBlank | None = Field(
+        default=None, description="Trace name; null matches any name."
+    )
+    tags: list[NonBlank] = Field(
+        default_factory=list,
+        description="Tags the trace must carry (it may carry more). Returned sorted.",
+    )
+
+    def to_domain(self) -> ProfileRule:
+        """Domain rule for this request body."""
+        return ProfileRule(
+            environment=self.environment, trace_name=self.trace_name, tags=tuple(self.tags)
+        )
+
+    @classmethod
+    def from_domain(cls, rule: ProfileRule) -> ProfileRuleSchema:
+        """Response body for a domain rule."""
+        return cls(environment=rule.environment, trace_name=rule.trace_name, tags=list(rule.tags))
+
+
+class ProfileCreateRequest(BaseModel):
+    """Body of `POST /profiles`."""
+
+    name: ProfileName
+    rule: ProfileRuleSchema
+
+
+class ProfileUpdateRequest(BaseModel):
+    """Body of `PATCH /profiles/{id}`: only the fields sent change."""
+
+    name: ProfileName | None = None
+    rule: ProfileRuleSchema | None = None
+
+    @model_validator(mode="after")
+    def _requires_a_change(self) -> ProfileUpdateRequest:
+        """Reject an empty body."""
+        if self.name is None and self.rule is None:
+            raise ValueError("Send `name`, `rule` or both")
+        return self
+
+
+class ProfileResponse(BaseModel):
+    """A profile and how many stored traces belong to it."""
+
+    id: int
+    name: str
+    rule: ProfileRuleSchema
+    status: ProfileStatus = Field(description="`archived` profiles are no longer monitored.")
+    created_at: datetime
+    archived_at: datetime | None
+    trace_count: int
+
+    @classmethod
+    def from_domain(cls, profile: Profile, trace_count: int) -> ProfileResponse:
+        """Response body for a domain profile and its trace count."""
+        return cls(
+            id=profile.id,
+            name=profile.name,
+            rule=ProfileRuleSchema.from_domain(profile.rule),
+            status=profile.status,
+            created_at=profile.created_at,
+            archived_at=profile.archived_at,
+            trace_count=trace_count,
+        )
+
+
+class UnclassifiedResponse(BaseModel):
+    """Traces that no profile captures ("Sin clasificar")."""
+
+    trace_count: int
+
+
+class ProfileListResponse(BaseModel):
+    """Every profile (oldest first) plus the unclassified group."""
+
+    profiles: list[ProfileResponse]
+    unclassified: UnclassifiedResponse
+
+    @classmethod
+    def from_domain(cls, overview: ProfileOverview) -> ProfileListResponse:
+        """Response body for the service's overview."""
+        return cls(
+            profiles=[
+                ProfileResponse.from_domain(item.profile, item.trace_count)
+                for item in overview.profiles
+            ],
+            unclassified=UnclassifiedResponse(trace_count=overview.unclassified_count),
+        )
+
+
+class DiscoveredProfileResponse(BaseModel):
+    """A group of unclassified traces that could become a profile."""
+
+    rule: ProfileRuleSchema = Field(description="Rule that captures exactly this group.")
+    suggested_name: str = Field(description="The trace name; replace it with a business name.")
+    monitored_environment: bool = Field(
+        description=f"Whether the group is in `{MONITORED_ENVIRONMENT}`, the environment "
+        "watched by default."
+    )
+    trace_count: int
+    first_seen: datetime
+    last_seen: datetime
+    total_cost: float = Field(description="Cost of the group's traces in USD.")
+
+    @classmethod
+    def from_domain(cls, group: DiscoveredGroup) -> DiscoveredProfileResponse:
+        """Response body for a discovered group."""
+        return cls(
+            rule=ProfileRuleSchema.from_domain(group.rule),
+            suggested_name=group.trace_name,
+            monitored_environment=group.environment == MONITORED_ENVIRONMENT,
+            trace_count=group.trace_count,
+            first_seen=group.first_seen,
+            last_seen=group.last_seen,
+            total_cost=float(group.total_cost),
+        )
+
+
+class DiscoveryResponse(BaseModel):
+    """Candidate profiles, largest group first."""
+
+    groups: list[DiscoveredProfileResponse]
 
 
 class SyncRunResponse(BaseModel):

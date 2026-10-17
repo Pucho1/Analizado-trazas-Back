@@ -89,6 +89,17 @@ Los endpoints de trazas leen siempre de PostgreSQL. La sincronización copia las
 | `SYNC_TIMEZONE`              | `Europe/Madrid`                 | Zona horaria IANA de esas horas.                             |
 | `SYNC_INITIAL_LOOKBACK_DAYS` | `30`                            | Días hacia atrás que lee el primer escaneo.                  |
 
+## Perfiles
+
+Un perfil agrupa las trazas de una herramienta o agente bajo un nombre de negocio («Asistente de la web»).
+
+- **Regla**: entorno (por defecto `production`), nombre de traza (opcional) y tags (opcional). Una traza encaja si coincide el entorno, el nombre (si se fija) y lleva todos los tags de la regla (puede llevar más). El `userId` no se usa.
+- **Varias reglas encajan**: gana la más específica (nombre + nº de tags); en empate, el perfil más antiguo.
+- **Sin clasificar**: las trazas que no encajan en ningún perfil.
+- **Autodescubrimiento** (`GET /profiles/discover`): agrupa las trazas sin clasificar por entorno + nombre + tags y las propone, de mayor a menor. No crea nada; las trazas `(unnamed)` (sin paso raíz) no se proponen.
+- Las trazas se **reclasifican** al crear o cambiar la regla de un perfil y tras cada sincronización.
+- **Archivar**: deja de vigilarse, conserva su historial y sigue recibiendo sus trazas nuevas. **Eliminar**: borra el perfil y, en cascada, sus trazas y observaciones.
+
 ## Arranque
 
 ```bash
@@ -115,6 +126,12 @@ curl "http://127.0.0.1:8000/api/v1/traces/summary?range=7d"
 | `GET /api/v1/traces/summary`  | Número de trazas, coste total, tokens totales y latencia media.              |
 | `POST /api/v1/sync`           | Sincroniza ahora; espera a que acabe y devuelve la ejecución.                |
 | `GET /api/v1/sync`            | Si hay una sincronización en curso, la última ejecución y la última correcta. |
+| `GET /api/v1/profiles`        | Perfiles con su número de trazas, más el grupo «Sin clasificar».             |
+| `GET /api/v1/profiles/discover` | Grupos de trazas sin perfil (entorno + nombre + tags) propuestos como perfiles. |
+| `POST /api/v1/profiles`       | Crea un perfil (`name` + `rule`) y clasifica las trazas guardadas.           |
+| `PATCH /api/v1/profiles/{id}` | Renombra y/o cambia la regla (reclasifica si cambia la regla).               |
+| `POST /api/v1/profiles/{id}/archive` · `/unarchive` | Deja de vigilar el perfil (conserva su historial) o lo reactiva. |
+| `DELETE /api/v1/profiles/{id}` | Borra el perfil **y todas sus trazas**. No se puede deshacer.               |
 
 Los de trazas aceptan `range` = `24h` (por defecto), `7d` o `30d`.
 
@@ -124,7 +141,9 @@ Errores (`error.code` en el cuerpo):
 - `502` `trace_source_auth_failed` (solo `POST /sync`): Langfuse ha rechazado las claves. Revisa `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` y que `LANGFUSE_HOST` sea la región de tu proyecto. Los escaneos automáticos que fallan por esto quedan en `GET /sync` (`last_run.error_code`).
 - `502` `trace_source_unavailable` (solo `POST /sync`): cualquier otro fallo al hablar con Langfuse.
 - `409` `sync_already_running` (solo `POST /sync`): ya hay una sincronización en curso.
-- `422`: parámetro inválido (p. ej. `range=1y`).
+- `404` `profile_not_found`: no existe un perfil con ese id.
+- `409` `profile_name_taken`: ya hay un perfil con ese nombre (sin distinguir mayúsculas).
+- `422`: parámetro o cuerpo inválido (p. ej. `range=1y`, nombre vacío).
 
 ## Calidad
 

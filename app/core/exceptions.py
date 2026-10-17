@@ -16,3 +16,11 @@ class RepositoryError(ObservaError):
 
 class SyncAlreadyRunningError(ObservaError):
     """A synchronisation was requested while another one is still running."""
+
+
+class ProfileNotFoundError(ObservaError):
+    """No profile has the requested id."""
+
+
+class ProfileNameTakenError(ObservaError):
+    """Another profile already has that name (names are compared ignoring case)."""

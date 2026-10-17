@@ -3,8 +3,8 @@ from datetime import timedelta
 # Prefix under which every v1 endpoint is mounted.
 API_V1_PREFIX = "/api/v1"
 
-# CORS. No login yet, so no credentials. POST is only used by "sync now".
-CORS_ALLOWED_METHODS = ("GET", "POST")
+# CORS. No login yet, so no credentials.
+CORS_ALLOWED_METHODS = ("GET", "POST", "PATCH", "DELETE")
 # A browser origin: scheme, host and optional port; no wildcard, path or trailing slash.
 CORS_ORIGIN_PATTERN = r"https?://[^/\s:*]+(:\d+)?"
 
@@ -12,6 +12,10 @@ CORS_ORIGIN_PATTERN = r"https?://[^/\s:*]+(:\d+)?"
 UNNAMED_TRACE_NAME = "(unnamed)"
 # Environment Langfuse assigns to traces sent without one.
 DEFAULT_ENVIRONMENT = "default"
+
+# Profiles. Only this environment is monitored unless a profile says otherwise.
+MONITORED_ENVIRONMENT = "production"
+PROFILE_NAME_MAX_LENGTH = 100
 
 # Langfuse public API. v2 observations is the only per-trace read path that will survive
 # the removal of `GET /api/public/traces` on Langfuse Cloud.
