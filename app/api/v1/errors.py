@@ -15,6 +15,7 @@ from app.core.exceptions import (
     SyncAlreadyRunningError,
     TraceSourceAuthenticationError,
     TraceSourceError,
+    UnknownReportSectionError,
 )
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,15 @@ INVALID_THRESHOLDS_RESPONSES: dict[int | str, dict[str, Any]] = {
 }
 
 
+UNKNOWN_SECTION_RESPONSES: dict[int | str, dict[str, Any]] = {
+    status.HTTP_400_BAD_REQUEST: {
+        "model": ErrorResponse,
+        "description": "`unknown_report_section`: a section key is not registered "
+        "(see GET /reports/sections).",
+    },
+}
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """Attach the handlers that map domain errors to HTTP responses.
 
@@ -79,6 +89,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(ProfileNotFoundError, _handle_profile_not_found)
     app.add_exception_handler(ProfileNameTakenError, _handle_profile_name_taken)
     app.add_exception_handler(InvalidThresholdsError, _handle_invalid_thresholds)
+    app.add_exception_handler(UnknownReportSectionError, _handle_unknown_section)
 
 
 async def _handle_auth_error(request: Request, exc: Exception) -> JSONResponse:
@@ -142,6 +153,15 @@ async def _handle_invalid_thresholds(request: Request, exc: Exception) -> JSONRe
         status.HTTP_400_BAD_REQUEST,
         ErrorCode.INVALID_THRESHOLDS,
         "The thresholds are inconsistent: 0 < warning_factor < critical_factor.",
+    )
+
+
+async def _handle_unknown_section(request: Request, exc: Exception) -> JSONResponse:
+    """Respond 400 when report settings name an unregistered section."""
+    return _error_response(
+        status.HTTP_400_BAD_REQUEST,
+        ErrorCode.UNKNOWN_REPORT_SECTION,
+        "Unknown report section; see GET /api/v1/reports/sections.",
     )
 
 

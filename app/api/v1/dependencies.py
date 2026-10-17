@@ -10,8 +10,11 @@ from typing import Annotated
 
 from fastapi import Depends, Request
 
+from app.application.event_service import EventService
 from app.application.monitoring_service import MonitoringService
 from app.application.profile_service import ProfileService
+from app.application.reports.service import ReportService
+from app.application.spend_service import SpendService
 from app.application.sync_service import SyncService
 from app.application.trace_service import TraceService
 from app.core.config import Settings
@@ -46,6 +49,24 @@ def get_profile_service(request: Request) -> ProfileService:
 def get_monitoring_service(request: Request) -> MonitoringService:
     """Return the baseline and alert use cases created by the application lifespan."""
     service: MonitoringService = request.app.state.monitoring_service
+    return service
+
+
+def get_spend_service(request: Request) -> SpendService:
+    """Return the spend use cases created by the application lifespan."""
+    service: SpendService = request.app.state.spend_service
+    return service
+
+
+def get_event_service(request: Request) -> EventService:
+    """Return the event mapping use cases created by the application lifespan."""
+    service: EventService = request.app.state.event_service
+    return service
+
+
+def get_report_service(request: Request) -> ReportService:
+    """Return the report use cases created by the application lifespan."""
+    service: ReportService = request.app.state.report_service
     return service
 
 

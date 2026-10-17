@@ -5,6 +5,7 @@ domain models so the domain can evolve without breaking clients. Monetary amount
 computed with `Decimal` in the domain and only converted to JSON numbers here.
 """
 
+from collections.abc import Sequence
 from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
@@ -14,15 +15,19 @@ from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 from app.application.monitoring_service import BaselineView
 from app.application.profile_service import ProfileOverview
+from app.application.spend_service import SpendSummary
 from app.application.sync_service import SyncState
 from app.core.constants import (
+    EVENT_LABEL_MAX_LENGTH,
     LEARNING_TRACES,
     MIN_BASELINE_DAYS,
     MONITORED_ENVIRONMENT,
     PROFILE_NAME_MAX_LENGTH,
 )
+from app.domain.events import EventMapping, StepCount
 from app.domain.models import (
     DiscoveredGroup,
+    ObservationLevel,
     Profile,
     ProfileRule,
     ProfileStatus,
@@ -43,6 +48,8 @@ from app.domain.monitoring import (
     Severity,
     TraceMetric,
 )
+from app.domain.reporting import Channel, ChannelSettings
+from app.domain.spend import CostDriver, PeriodComparison, PeriodKind, SpendTotals
 
 
 class TraceResponse(BaseModel):
@@ -120,6 +127,7 @@ class ErrorCode(StrEnum):
     PROFILE_NOT_FOUND = "profile_not_found"
     PROFILE_NAME_TAKEN = "profile_name_taken"
     INVALID_THRESHOLDS = "invalid_thresholds"
+    UNKNOWN_REPORT_SECTION = "unknown_report_section"
 
 
 ProfileName = Annotated[
@@ -515,3 +523,231 @@ class ErrorResponse(BaseModel):
     """Body of every error response produced by Observa's own exception handlers."""
 
     error: ErrorDetail
+
+
+class SpendTotalsResponse(BaseModel):
+    """Queries, cost (USD) and text volume of a set of traces."""
+
+    queries: int
+    cost: float
+    cost_per_query: float | None = Field(description="Null without queries.")
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+
+    @classmethod
+    def from_domain(cls, totals: SpendTotals) -> SpendTotalsResponse:
+        """Response body for domain totals."""
+        return cls(
+            queries=totals.queries,
+            cost=float(totals.cost),
+            cost_per_query=_optional_float(totals.cost_per_query),
+            input_tokens=totals.input_tokens,
+            output_tokens=totals.output_tokens,
+            total_tokens=totals.total_tokens,
+        )
+
+
+class ProfileSpendResponse(BaseModel):
+    """What one profile spent."""
+
+    profile_id: int
+    name: str
+    status: ProfileStatus
+    totals: SpendTotalsResponse
+    cost_share: float | None = Field(description="Fraction (0-1) of the total cost.")
+
+
+class SpendSummaryResponse(BaseModel):
+    """Spend per profile (largest cost first), unclassified spend and total."""
+
+    time_range: TimeRange
+    start: datetime
+    end: datetime
+    profiles: list[ProfileSpendResponse]
+    unclassified: SpendTotalsResponse
+    total: SpendTotalsResponse
+
+    @classmethod
+    def from_domain(cls, time_range: TimeRange, summary: SpendSummary) -> SpendSummaryResponse:
+        """Response body for the service's summary."""
+        return cls(
+            time_range=time_range,
+            start=summary.start,
+            end=summary.end,
+            profiles=[
+                ProfileSpendResponse(
+                    profile_id=item.profile.id,
+                    name=item.profile.name,
+                    status=item.profile.status,
+                    totals=SpendTotalsResponse.from_domain(item.totals),
+                    cost_share=_optional_float(item.cost_share),
+                )
+                for item in summary.profiles
+            ],
+            unclassified=SpendTotalsResponse.from_domain(summary.unclassified),
+            total=SpendTotalsResponse.from_domain(summary.total),
+        )
+
+
+class PeriodComparisonResponse(BaseModel):
+    """A period against the previous one with the same number of days."""
+
+    period: PeriodKind
+    current_first_day: date
+    current_last_day: date
+    previous_first_day: date
+    previous_last_day: date
+    current: SpendTotalsResponse
+    previous: SpendTotalsResponse
+    cost_change: float | None = Field(description="Relative change; null if previous cost is 0.")
+    queries_change: float | None = Field(description="Relative change; null if none before.")
+    cost_driver: CostDriver | None = Field(
+        description="`volume` (more/fewer queries) or `price` (dearer/cheaper queries)."
+    )
+
+    @classmethod
+    def from_domain(cls, comparison: PeriodComparison) -> PeriodComparisonResponse:
+        """Response body for a domain comparison."""
+        return cls(
+            period=comparison.period,
+            current_first_day=comparison.current_range.first,
+            current_last_day=comparison.current_range.last,
+            previous_first_day=comparison.previous_range.first,
+            previous_last_day=comparison.previous_range.last,
+            current=SpendTotalsResponse.from_domain(comparison.current),
+            previous=SpendTotalsResponse.from_domain(comparison.previous),
+            cost_change=_optional_float(comparison.cost_change),
+            queries_change=_optional_float(comparison.queries_change),
+            cost_driver=comparison.driver,
+        )
+
+
+class ComparisonsResponse(BaseModel):
+    """Day, week and month up to `day` against the previous ones."""
+
+    day: date
+    profile_id: int | None = Field(description="Null = every trace.")
+    comparisons: list[PeriodComparisonResponse]
+
+
+class StepNameResponse(BaseModel):
+    """A named step of a profile's agent, to decide whether it is a business event."""
+
+    name: str
+    level: ObservationLevel
+    occurrences: int
+    queries: int
+
+
+class StepNamesResponse(BaseModel):
+    """A profile's step names, most frequent first."""
+
+    steps: list[StepNameResponse]
+
+    @classmethod
+    def from_domain(cls, steps: Sequence[StepCount]) -> StepNamesResponse:
+        """Response body for step counts."""
+        return cls(
+            steps=[
+                StepNameResponse(
+                    name=step.name,
+                    level=step.level,
+                    occurrences=step.occurrences,
+                    queries=len(step.trace_ids),
+                )
+                for step in steps
+            ]
+        )
+
+
+EventLabel = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=EVENT_LABEL_MAX_LENGTH)
+]
+
+
+class EventMappingSchema(BaseModel):
+    """Steps named `observation_name` are reported as the business event `label`."""
+
+    observation_name: NonBlank
+    label: EventLabel = Field(description="Business wording, e.g. «Intentos de manipulación».")
+
+
+class EventMappingsSchema(BaseModel):
+    """A profile's whole event mapping (empty until the user defines it)."""
+
+    mappings: list[EventMappingSchema]
+
+    @model_validator(mode="after")
+    def _unique_names(self) -> EventMappingsSchema:
+        """Reject a step name mapped twice."""
+        names = [mapping.observation_name for mapping in self.mappings]
+        if len(set(names)) != len(names):
+            raise ValueError("Each observation_name can be mapped only once")
+        return self
+
+    def to_domain(self) -> list[EventMapping]:
+        """Domain mappings."""
+        return [EventMapping(m.observation_name, m.label) for m in self.mappings]
+
+    @classmethod
+    def from_domain(cls, mappings: Sequence[EventMapping]) -> EventMappingsSchema:
+        """Body for domain mappings."""
+        return cls(
+            mappings=[
+                EventMappingSchema(observation_name=m.observation_name, label=m.label)
+                for m in mappings
+            ]
+        )
+
+
+class ReportSectionResponse(BaseModel):
+    """A registered report section."""
+
+    key: str
+    title: str
+
+
+class ReportSectionsResponse(BaseModel):
+    """Every registered section, in default order."""
+
+    sections: list[ReportSectionResponse]
+
+
+class ChannelSettingsResponse(BaseModel):
+    """Which sections a channel's daily report has, in order."""
+
+    channel: Channel
+    enabled: bool
+    sections: list[str]
+
+    @classmethod
+    def from_domain(cls, settings: ChannelSettings) -> ChannelSettingsResponse:
+        """Response body for domain settings."""
+        return cls(
+            channel=settings.channel, enabled=settings.enabled, sections=list(settings.sections)
+        )
+
+
+class ChannelSettingsRequest(BaseModel):
+    """Body of `PUT /reports/settings/{channel}`."""
+
+    enabled: bool
+    sections: list[str] = Field(description="Section keys in order (see GET /reports/sections).")
+
+    @model_validator(mode="after")
+    def _unique_sections(self) -> ChannelSettingsRequest:
+        """Reject repeated sections."""
+        if len(set(self.sections)) != len(self.sections):
+            raise ValueError("A section can appear only once")
+        return self
+
+
+class RenderedReportResponse(BaseModel):
+    """A report laid out for one channel (what would be sent)."""
+
+    channel: Channel
+    day: date
+    subject: str
+    content_type: str
+    body: str

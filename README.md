@@ -131,6 +131,24 @@ Cálculo determinista (sin IA) tras cada escaneo, para cada perfil **activo** (l
 | --------------------- | --------------- | ---------------------------------------------------- |
 | `MONITORING_TIMEZONE` | `Europe/Madrid` | Zona horaria de los días de la línea base y alertas. |
 
+## Resumen de gasto y reportes
+
+**Resumen de gasto** (cálculo exacto en el backend):
+
+- Por perfil: consultas, coste, coste medio por consulta, texto leído y generado, y peso sobre el total; también «Sin clasificar».
+- Comparaciones con días cerrados (`MONITORING_TIMEZONE`): el día frente al anterior, la semana (lunes→día) y el mes (1→día) frente a **los mismos días** del periodo anterior. Sin actividad previa se indica «nuevo», nunca «+∞ %».
+- El motivo del cambio de coste separa volumen (más o menos consultas) y precio (consultas más caras o baratas).
+
+**Eventos de negocio**: mapeo por perfil de nombre de paso → etiqueta («`manipulation-attempt`» → «Intentos de manipulación»); varios nombres pueden compartir etiqueta. **Empieza vacío**: el usuario decide qué es un evento (`GET /profiles/{id}/observation-names` ayuda a elegir). Los pasos `WARNING`/`ERROR` sin mapear se cuentan como avisos o errores técnicos.
+
+**Reportes extensibles** (`app/application/reports/`):
+
+- Cada sección cumple el contrato `ReportSection` (`key`, `title`, `build(data) -> Section | None`) y se registra en el `SectionRegistry`. Añadir un dato al reporte = escribir una sección. Una sección sin nada que decir devuelve `None` y se omite.
+- Las secciones producen bloques neutros (titular, dato, tabla, nota) en español de negocio; nunca «traza», «span», «observación» ni «tokens» (un test lo comprueba).
+- Presentadores por canal: email (HTML con estilos en línea) y Telegram (texto breve, recortado al límite de 4096 caracteres). Todavía no se envía nada.
+- Secciones: `overview`, `alerts`, `business_events`, `spend_by_profile`, `period_comparison`, `text_volume`. Por defecto el email lleva todas y Telegram `overview`, `alerts` y `business_events`; se cambia con `PUT /reports/settings/{channel}`.
+- «Un día normal» es la mediana diaria de los días anteriores (mínimo 7); si es 0 (días sin uso), la media; si también es 0, no se compara.
+
 ## Arranque
 
 ```bash
@@ -167,6 +185,13 @@ curl "http://127.0.0.1:8000/api/v1/traces/summary?range=7d"
 | `PATCH /api/v1/profiles/{id}/thresholds` | Ajusta umbrales (`"daily_budget": null` quita el presupuesto).    |
 | `POST /api/v1/profiles/{id}/relearn` | Vuelve a aprender desde ahora.                                        |
 | `GET /api/v1/alerts`          | Alertas, de la más reciente a la más antigua (`profile_id`, `since`, `limit`). |
+| `GET /api/v1/spend`           | Gasto por perfil, sin clasificar y total (`range` = `24h`, `7d`, `30d`).     |
+| `GET /api/v1/spend/comparisons` | Día, semana y mes frente al periodo anterior (`day`, `profile_id`).        |
+| `GET /api/v1/profiles/{id}/observation-names` | Nombres de paso del perfil con su frecuencia, para elegir eventos. |
+| `GET` · `PUT /api/v1/profiles/{id}/event-mappings` | Mapeo de eventos de negocio del perfil (se sustituye entero). |
+| `GET /api/v1/reports/sections` | Secciones disponibles.                                                     |
+| `GET` · `PUT /api/v1/reports/settings/{channel}` | Secciones y activación de `email` o `telegram`.            |
+| `GET /api/v1/reports/daily`   | Vista previa del reporte diario (`channel`, `day`; por defecto ayer).        |
 
 Los de trazas aceptan `range` = `24h` (por defecto), `7d` o `30d`.
 
@@ -179,6 +204,7 @@ Errores (`error.code` en el cuerpo):
 - `404` `profile_not_found`: no existe un perfil con ese id.
 - `409` `profile_name_taken`: ya hay un perfil con ese nombre (sin distinguir mayúsculas).
 - `400` `invalid_thresholds`: los umbrales resultantes serían incoherentes (p. ej. aviso ≥ crítico).
+- `400` `unknown_report_section`: la configuración de un canal nombra una sección que no existe.
 - `422`: parámetro o cuerpo inválido (p. ej. `range=1y`, nombre vacío).
 
 ## Calidad

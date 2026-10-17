@@ -11,6 +11,7 @@ from typing import Any
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     Date,
     DateTime,
@@ -22,6 +23,7 @@ from sqlalchemy import (
     MetaData,
     Numeric,
     Text,
+    UniqueConstraint,
     func,
     text,
 )
@@ -37,6 +39,7 @@ from app.core.constants import (
 )
 from app.domain.models import ObservationLevel, ProfileStatus, SyncStatus, SyncTrigger
 from app.domain.monitoring import AlertKind, AlertMetric, AlertScope, Severity
+from app.domain.reporting import Channel
 
 # Stable constraint and index names, so that migrations are reproducible.
 NAMING_CONVENTION = {
@@ -156,6 +159,31 @@ class AlertRow(Base):
     worst_trace_id: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class EventMappingRow(Base):
+    """A profile's business label for steps with a given name."""
+
+    __tablename__ = "event_mappings"
+    __table_args__ = (UniqueConstraint("profile_id", "observation_name"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    profile_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey(_PROFILE_ID, ondelete="CASCADE"), index=True
+    )
+    observation_name: Mapped[str] = mapped_column(Text)
+    label: Mapped[str] = mapped_column(Text)
+
+
+class ReportSettingsRow(Base):
+    """Sections (ordered keys) of one channel's daily report."""
+
+    __tablename__ = "report_settings"
+    __table_args__ = (CheckConstraint(f"channel IN ({_sql_values(Channel)})", name="channel"),)
+
+    channel: Mapped[str] = mapped_column(Text, primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean)
+    sections: Mapped[list[str]] = mapped_column(ARRAY(Text))
 
 
 class TraceRow(Base):

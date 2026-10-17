@@ -4,7 +4,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Response, status
 
-from app.api.v1.dependencies import get_monitoring_service, get_profile_service
+from app.api.v1.dependencies import (
+    get_event_service,
+    get_monitoring_service,
+    get_profile_service,
+)
 from app.api.v1.errors import (
     DATABASE_ERROR_RESPONSES,
     INVALID_THRESHOLDS_RESPONSES,
@@ -15,12 +19,15 @@ from app.api.v1.schemas import (
     BaselineResponse,
     DiscoveredProfileResponse,
     DiscoveryResponse,
+    EventMappingsSchema,
     ProfileCreateRequest,
     ProfileListResponse,
     ProfileResponse,
     ProfileUpdateRequest,
+    StepNamesResponse,
     ThresholdsUpdateRequest,
 )
+from app.application.event_service import EventService
 from app.application.monitoring_service import MonitoringService
 from app.application.profile_service import ProfileService
 from app.domain.models import Profile
@@ -29,6 +36,7 @@ router = APIRouter(prefix="/profiles", tags=["profiles"], responses=DATABASE_ERR
 
 ProfileServiceDep = Annotated[ProfileService, Depends(get_profile_service)]
 MonitoringServiceDep = Annotated[MonitoringService, Depends(get_monitoring_service)]
+EventServiceDep = Annotated[EventService, Depends(get_event_service)]
 
 
 @router.get("", summary="List profiles")
@@ -147,6 +155,42 @@ async def relearn(
     Use it after changing the model or the prompt.
     """
     return await _with_count(service, await monitoring.relearn(profile_id))
+
+
+@router.get(
+    "/{profile_id}/observation-names",
+    summary="Step names of a profile",
+    responses=PROFILE_NOT_FOUND_RESPONSES,
+)
+async def list_step_names(profile_id: int, events: EventServiceDep) -> StepNamesResponse:
+    """Every named step of the profile's agent with how often it ran, most frequent first.
+
+    Use it to choose which steps are business events.
+    """
+    return StepNamesResponse.from_domain(await events.step_names(profile_id))
+
+
+@router.get(
+    "/{profile_id}/event-mappings",
+    summary="Business event mapping of a profile",
+    responses=PROFILE_NOT_FOUND_RESPONSES,
+)
+async def get_event_mappings(profile_id: int, events: EventServiceDep) -> EventMappingsSchema:
+    """Which step names the reports show as business events, and with which label."""
+    return EventMappingsSchema.from_domain(await events.mappings(profile_id))
+
+
+@router.put(
+    "/{profile_id}/event-mappings",
+    summary="Replace the business event mapping of a profile",
+    responses=PROFILE_NOT_FOUND_RESPONSES,
+)
+async def put_event_mappings(
+    profile_id: int, body: EventMappingsSchema, events: EventServiceDep
+) -> EventMappingsSchema:
+    """Replace the whole mapping (send an empty list to clear it)."""
+    mappings = await events.replace_mappings(profile_id, body.to_domain())
+    return EventMappingsSchema.from_domain(mappings)
 
 
 async def _with_count(service: ProfileService, profile: Profile) -> ProfileResponse:

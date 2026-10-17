@@ -4,7 +4,9 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 
+from app.core.constants import DEFAULT_EMAIL_SECTIONS, DEFAULT_TELEGRAM_SECTIONS
 from app.core.exceptions import ProfileNameTakenError, ProfileNotFoundError
+from app.domain.events import EventMapping, StepCount
 from app.domain.models import (
     DiscoveredGroup,
     Observation,
@@ -19,6 +21,8 @@ from app.domain.models import (
     TraceKey,
 )
 from app.domain.monitoring import Alert, Baseline, TraceSample
+from app.domain.reporting import Channel, ChannelSettings
+from app.domain.spend import SpendTotals
 
 DEFAULT_TIMESTAMP = datetime(2026, 1, 15, 12, 0, tzinfo=UTC)
 
@@ -359,3 +363,80 @@ class InMemoryMonitoringRepository:
             if self._profiles.profile_of[trace.id] == profile_id
             and (since is None or trace.timestamp >= since)
         ]
+
+
+class InMemorySpendRepository:
+    """SpendRepository over the traces of an `InMemoryProfileRepository`."""
+
+    def __init__(self, profiles: InMemoryProfileRepository) -> None:
+        """Read traces (and their profile) from `profiles`."""
+        self._profiles = profiles
+
+    async def totals_by_profile(
+        self, start: datetime, end: datetime
+    ) -> Mapping[int | None, SpendTotals]:
+        """Totals per profile id of the traces in [start, end)."""
+        totals: dict[int | None, SpendTotals] = {}
+        for trace in self._profiles.traces.values():
+            if start <= trace.timestamp < end:
+                profile_id = self._profiles.profile_of[trace.id]
+                one = SpendTotals(
+                    1, trace.cost, trace.input_tokens, trace.output_tokens, trace.total_tokens
+                )
+                totals[profile_id] = totals.get(profile_id, SpendTotals.zero()) + one
+        return totals
+
+    async def step_counts(
+        self, profile_id: int, start: datetime | None, end: datetime | None
+    ) -> Sequence[StepCount]:
+        """Named steps of the profile's traces in [start, end), by name and level."""
+        occurrences: dict[tuple[str, ObservationLevel], int] = defaultdict(int)
+        traces: dict[tuple[str, ObservationLevel], set[str]] = defaultdict(set)
+        for trace in self._profiles.traces.values():
+            if self._profiles.profile_of[trace.id] != profile_id:
+                continue
+            if (start and trace.timestamp < start) or (end and trace.timestamp >= end):
+                continue
+            for step in trace.observations:
+                if step.name is not None:
+                    occurrences[(step.name, step.level)] += 1
+                    traces[(step.name, step.level)].add(trace.id)
+        return [
+            StepCount(name, level, occurrences[(name, level)], frozenset(traces[(name, level)]))
+            for name, level in sorted(occurrences)
+        ]
+
+
+class InMemoryEventMappingRepository:
+    """EventMappingRepository backed by a dict."""
+
+    def __init__(self) -> None:
+        """No mappings."""
+        self.mappings: dict[int, list[EventMapping]] = {}
+
+    async def list_mappings(self, profile_id: int) -> Sequence[EventMapping]:
+        """The profile's mappings, by step name."""
+        return sorted(self.mappings.get(profile_id, []), key=lambda m: m.observation_name)
+
+    async def replace_mappings(self, profile_id: int, mappings: Sequence[EventMapping]) -> None:
+        """Replace the profile's mappings."""
+        self.mappings[profile_id] = list(mappings)
+
+
+class InMemoryReportSettingsRepository:
+    """ReportSettingsRepository with the default sections until changed."""
+
+    def __init__(self) -> None:
+        """Default settings for every channel."""
+        self.settings = {
+            Channel.EMAIL: ChannelSettings(Channel.EMAIL, True, DEFAULT_EMAIL_SECTIONS),
+            Channel.TELEGRAM: ChannelSettings(Channel.TELEGRAM, True, DEFAULT_TELEGRAM_SECTIONS),
+        }
+
+    async def get(self, channel: Channel) -> ChannelSettings:
+        """The channel's settings."""
+        return self.settings[channel]
+
+    async def save(self, settings: ChannelSettings) -> None:
+        """Replace the channel's settings."""
+        self.settings[settings.channel] = settings

@@ -28,3 +28,7 @@ class ProfileNameTakenError(ObservaError):
 
 class InvalidThresholdsError(ObservaError):
     """The requested alert thresholds are inconsistent (e.g. warning above critical)."""
+
+
+class UnknownReportSectionError(ObservaError):
+    """A report setting names a section that is not registered."""

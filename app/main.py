@@ -10,9 +10,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.v1.dependencies import get_settings
 from app.api.v1.errors import register_exception_handlers
-from app.api.v1.routes import alerts, profiles, sync, traces
+from app.api.v1.routes import alerts, profiles, reports, spend, sync, traces
+from app.application.event_service import EventService
 from app.application.monitoring_service import MonitoringService
 from app.application.profile_service import ProfileService
+from app.application.reports.data import ReportDataBuilder
+from app.application.reports.presenters import EmailPresenter, TelegramPresenter
+from app.application.reports.registry import default_registry
+from app.application.reports.service import ReportService
+from app.application.spend_service import SpendService
 from app.application.sync_service import AfterSyncHook, SyncService
 from app.core.config import Settings
 from app.core.constants import (
@@ -21,8 +27,14 @@ from app.core.constants import (
     SYNC_OVERLAP,
     SYNC_SOURCE_LANGFUSE,
 )
+from app.domain.reporting import Channel
 from app.infrastructure.database.monitoring_repository import SqlAlchemyMonitoringRepository
 from app.infrastructure.database.profile_repository import SqlAlchemyProfileRepository
+from app.infrastructure.database.reporting_repository import (
+    SqlAlchemyEventMappingRepository,
+    SqlAlchemyReportSettingsRepository,
+    SqlAlchemySpendRepository,
+)
 from app.infrastructure.database.session import (
     create_engine,
     create_session_factory,
@@ -49,14 +61,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         session_factory = create_session_factory(engine)
         http_client = await stack.enter_async_context(create_langfuse_http_client(settings))
 
+        timezone = ZoneInfo(settings.monitoring_timezone)
         profiles = SqlAlchemyProfileRepository(session_factory)
+        monitoring = SqlAlchemyMonitoringRepository(session_factory)
         app.state.trace_repository = SqlAlchemyTraceRepository(session_factory)
         app.state.profile_service = ProfileService(profiles)
-        app.state.monitoring_service = MonitoringService(
-            profiles,
-            SqlAlchemyMonitoringRepository(session_factory),
-            ZoneInfo(settings.monitoring_timezone),
-        )
+        app.state.monitoring_service = MonitoringService(profiles, monitoring, timezone)
+        _build_reporting(app, session_factory, profiles, monitoring, timezone)
         # After each sync: first classify the new traces, then judge them.
         app.state.sync_service = _build_sync_service(
             settings,
@@ -77,6 +88,35 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             scheduler.start()
             stack.callback(scheduler.shutdown, wait=False)
         yield
+
+
+def _build_reporting(
+    app: FastAPI,
+    session_factory: async_sessionmaker[AsyncSession],
+    profiles: SqlAlchemyProfileRepository,
+    monitoring: SqlAlchemyMonitoringRepository,
+    timezone: ZoneInfo,
+) -> None:
+    """Spend, event mapping and report services, stored in `app.state`."""
+    spend = SqlAlchemySpendRepository(session_factory)
+    mappings = SqlAlchemyEventMappingRepository(session_factory)
+    spend_service = SpendService(spend, profiles, timezone)
+    app.state.spend_service = spend_service
+    app.state.event_service = EventService(profiles, mappings, spend)
+    app.state.report_service = ReportService(
+        registry=default_registry(),
+        settings=SqlAlchemyReportSettingsRepository(session_factory),
+        data=ReportDataBuilder(
+            profiles=profiles,
+            spend=spend,
+            monitoring=monitoring,
+            mappings=mappings,
+            spend_service=spend_service,
+            timezone=timezone,
+        ),
+        presenters={Channel.EMAIL: EmailPresenter(), Channel.TELEGRAM: TelegramPresenter()},
+        spend=spend_service,
+    )
 
 
 def _build_sync_service(
@@ -117,6 +157,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(sync.router, prefix=API_V1_PREFIX)
     app.include_router(profiles.router, prefix=API_V1_PREFIX)
     app.include_router(alerts.router, prefix=API_V1_PREFIX)
+    app.include_router(spend.router, prefix=API_V1_PREFIX)
+    app.include_router(reports.router, prefix=API_V1_PREFIX)
     register_exception_handlers(app)
     return app
 

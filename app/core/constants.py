@@ -39,6 +39,21 @@ MONITORING_MAX_LOOKBACK = timedelta(days=1)
 ALERTS_DEFAULT_LIMIT = 100
 ALERTS_MAX_LIMIT = 500
 
+# Reports. Business labels of events, like profile names, have a maximum length.
+EVENT_LABEL_MAX_LENGTH = 100
+# Telegram rejects messages longer than this (characters after entity parsing).
+TELEGRAM_MAX_LENGTH = 4096
+# Default sections per channel (also seeded by the migration that creates the table).
+DEFAULT_EMAIL_SECTIONS = (
+    "overview",
+    "alerts",
+    "business_events",
+    "spend_by_profile",
+    "period_comparison",
+    "text_volume",
+)
+DEFAULT_TELEGRAM_SECTIONS = ("overview", "alerts", "business_events")
+
 # Langfuse public API. v2 observations is the only per-trace read path that will survive
 # the removal of `GET /api/public/traces` on Langfuse Cloud.
 LANGFUSE_OBSERVATIONS_PATH = "/api/public/v2/observations"

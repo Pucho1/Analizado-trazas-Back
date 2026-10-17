@@ -16,6 +16,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from app.core.constants import DEFAULT_EMAIL_SECTIONS, DEFAULT_TELEGRAM_SECTIONS
 from app.infrastructure.database.session import create_engine
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -58,9 +59,26 @@ async def _ping(url: str) -> None:
 
 @pytest.fixture
 async def engine(database_url: str) -> AsyncIterator[AsyncEngine]:
-    """Engine on the test database, with every table emptied before each test."""
+    """Engine on the test database, reset before and after each test."""
     engine = create_engine(database_url)
+    await _reset(engine)
+    yield engine
+    await _reset(engine)
+    await engine.dispose()
+
+
+async def _reset(engine: AsyncEngine) -> None:
+    """Empty every data table and put the report settings back as the migration seeds them."""
     async with engine.begin() as connection:
         await connection.execute(text("TRUNCATE profiles, traces, sync_runs CASCADE"))
-    yield engine
-    await engine.dispose()
+        await connection.execute(text("TRUNCATE report_settings"))
+        await connection.execute(
+            text(
+                "INSERT INTO report_settings (channel, enabled, sections) "
+                "VALUES ('email', true, :email), ('telegram', true, :telegram)"
+            ),
+            {
+                "email": list(DEFAULT_EMAIL_SECTIONS),
+                "telegram": list(DEFAULT_TELEGRAM_SECTIONS),
+            },
+        )

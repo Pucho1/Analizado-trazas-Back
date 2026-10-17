@@ -2,8 +2,11 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Protocol
 
+from app.domain.events import EventMapping, StepCount
 from app.domain.models import DiscoveredGroup, Profile, ProfileRule, SyncRun, Trace, TraceKey
 from app.domain.monitoring import Alert, Baseline, TraceSample
+from app.domain.reporting import Channel, ChannelSettings
+from app.domain.spend import SpendTotals
 
 
 class TraceSource(Protocol):
@@ -136,6 +139,50 @@ class MonitoringRepository(Protocol):
         self, profile_id: int | None, since: datetime | None, limit: int
     ) -> Sequence[Alert]:
         """Up to `limit` alerts, newest first, optionally of one profile and from `since`."""
+        ...
+
+
+class SpendRepository(Protocol):
+    """Aggregates of stored traces for spend summaries and reports.
+
+    Ranges are [start, end) on the trace start time. Raises `RepositoryError` if the
+    storage is unavailable.
+    """
+
+    async def totals_by_profile(
+        self, start: datetime, end: datetime
+    ) -> Mapping[int | None, SpendTotals]:
+        """Totals per profile id (None = unclassified); profiles without traces are absent."""
+        ...
+
+    async def step_counts(
+        self, profile_id: int, start: datetime | None, end: datetime | None
+    ) -> Sequence[StepCount]:
+        """Named steps of the profile's traces by name and level (None bounds = all time)."""
+        ...
+
+
+class EventMappingRepository(Protocol):
+    """Per-profile mapping of step names to business event labels."""
+
+    async def list_mappings(self, profile_id: int) -> Sequence[EventMapping]:
+        """The profile's mappings, by step name."""
+        ...
+
+    async def replace_mappings(self, profile_id: int, mappings: Sequence[EventMapping]) -> None:
+        """Replace all the profile's mappings with `mappings`."""
+        ...
+
+
+class ReportSettingsRepository(Protocol):
+    """Which sections each channel's report has."""
+
+    async def get(self, channel: Channel) -> ChannelSettings:
+        """The channel's settings (the defaults if never changed)."""
+        ...
+
+    async def save(self, settings: ChannelSettings) -> None:
+        """Store the channel's settings."""
         ...
 
 
