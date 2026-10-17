@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.v1.schemas import ErrorCode, ErrorDetail, ErrorResponse
 from app.core.exceptions import (
+    InvalidThresholdsError,
     ProfileNameTakenError,
     ProfileNotFoundError,
     RepositoryError,
@@ -56,6 +57,15 @@ PROFILE_NAME_TAKEN_RESPONSES: dict[int | str, dict[str, Any]] = {
 }
 
 
+INVALID_THRESHOLDS_RESPONSES: dict[int | str, dict[str, Any]] = {
+    status.HTTP_400_BAD_REQUEST: {
+        "model": ErrorResponse,
+        "description": "`invalid_thresholds`: the result would be inconsistent "
+        "(e.g. warning_factor not below critical_factor).",
+    },
+}
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """Attach the handlers that map domain errors to HTTP responses.
 
@@ -68,6 +78,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(SyncAlreadyRunningError, _handle_sync_already_running)
     app.add_exception_handler(ProfileNotFoundError, _handle_profile_not_found)
     app.add_exception_handler(ProfileNameTakenError, _handle_profile_name_taken)
+    app.add_exception_handler(InvalidThresholdsError, _handle_invalid_thresholds)
 
 
 async def _handle_auth_error(request: Request, exc: Exception) -> JSONResponse:
@@ -122,6 +133,15 @@ async def _handle_profile_name_taken(request: Request, exc: Exception) -> JSONRe
         status.HTTP_409_CONFLICT,
         ErrorCode.PROFILE_NAME_TAKEN,
         "Another profile already has that name.",
+    )
+
+
+async def _handle_invalid_thresholds(request: Request, exc: Exception) -> JSONResponse:
+    """Respond 400 when the requested thresholds would be inconsistent."""
+    return _error_response(
+        status.HTTP_400_BAD_REQUEST,
+        ErrorCode.INVALID_THRESHOLDS,
+        "The thresholds are inconsistent: 0 < warning_factor < critical_factor.",
     )
 
 

@@ -1,4 +1,4 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import timedelta
 from zoneinfo import ZoneInfo
@@ -10,9 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.v1.dependencies import get_settings
 from app.api.v1.errors import register_exception_handlers
-from app.api.v1.routes import profiles, sync, traces
+from app.api.v1.routes import alerts, profiles, sync, traces
+from app.application.monitoring_service import MonitoringService
 from app.application.profile_service import ProfileService
-from app.application.sync_service import SyncService
+from app.application.sync_service import AfterSyncHook, SyncService
 from app.core.config import Settings
 from app.core.constants import (
     API_V1_PREFIX,
@@ -20,6 +21,7 @@ from app.core.constants import (
     SYNC_OVERLAP,
     SYNC_SOURCE_LANGFUSE,
 )
+from app.infrastructure.database.monitoring_repository import SqlAlchemyMonitoringRepository
 from app.infrastructure.database.profile_repository import SqlAlchemyProfileRepository
 from app.infrastructure.database.session import (
     create_engine,
@@ -36,8 +38,9 @@ from app.infrastructure.scheduler import create_sync_scheduler
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Wire the shared objects at startup and release them at shutdown.
 
-    Opens the database engine and the Langfuse HTTP client, builds the repositories and
-    the single sync service, and starts the scan scheduler when sync is enabled.
+    Opens the database engine and the Langfuse HTTP client, builds the repositories, the
+    profile and monitoring services and the single sync service, and starts the scan
+    scheduler when sync is enabled.
     """
     settings: Settings = app.state.settings
     async with AsyncExitStack() as stack:
@@ -46,10 +49,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         session_factory = create_session_factory(engine)
         http_client = await stack.enter_async_context(create_langfuse_http_client(settings))
 
+        profiles = SqlAlchemyProfileRepository(session_factory)
         app.state.trace_repository = SqlAlchemyTraceRepository(session_factory)
-        app.state.profile_service = ProfileService(SqlAlchemyProfileRepository(session_factory))
+        app.state.profile_service = ProfileService(profiles)
+        app.state.monitoring_service = MonitoringService(
+            profiles,
+            SqlAlchemyMonitoringRepository(session_factory),
+            ZoneInfo(settings.monitoring_timezone),
+        )
+        # After each sync: first classify the new traces, then judge them.
         app.state.sync_service = _build_sync_service(
-            settings, session_factory, http_client, app.state.profile_service
+            settings,
+            session_factory,
+            http_client,
+            after_sync=[
+                app.state.profile_service.reclassify_after_sync,
+                app.state.monitoring_service.after_sync,
+            ],
         )
 
         if settings.sync_enabled:
@@ -67,9 +83,10 @@ def _build_sync_service(
     settings: Settings,
     session_factory: async_sessionmaker[AsyncSession],
     http_client: httpx2.AsyncClient,
-    profile_service: ProfileService,
+    *,
+    after_sync: Sequence[AfterSyncHook],
 ) -> SyncService:
-    """Sync service reading from Langfuse, writing to PostgreSQL and then classifying."""
+    """Sync service reading from Langfuse and writing to PostgreSQL."""
     return SyncService(
         source_name=SYNC_SOURCE_LANGFUSE,
         source=LangfuseTraceSource(http_client),
@@ -77,7 +94,7 @@ def _build_sync_service(
         runs=SqlAlchemySyncRunRepository(session_factory),
         overlap=SYNC_OVERLAP,
         initial_lookback=timedelta(days=settings.sync_initial_lookback_days),
-        after_sync=[profile_service.reclassify_after_sync],
+        after_sync=after_sync,
     )
 
 
@@ -99,6 +116,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(traces.router, prefix=API_V1_PREFIX)
     app.include_router(sync.router, prefix=API_V1_PREFIX)
     app.include_router(profiles.router, prefix=API_V1_PREFIX)
+    app.include_router(alerts.router, prefix=API_V1_PREFIX)
     register_exception_handlers(app)
     return app
 

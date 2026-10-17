@@ -64,9 +64,14 @@ def test_sync_schedule_may_be_empty() -> None:
     assert required_plus(sync_schedule=[]).sync_schedule == []
 
 
-def test_sync_timezone_rejects_unknown_zones() -> None:
+@pytest.mark.parametrize("field", ["sync_timezone", "monitoring_timezone"])
+def test_timezones_reject_unknown_zones(field: str) -> None:
     with pytest.raises(ValidationError, match="Unknown time zone"):
-        required_plus(sync_timezone="Mars/Olympus")
+        required_plus(**{field: "Mars/Olympus"})
+
+
+def test_monitoring_timezone_defaults_to_madrid() -> None:
+    assert required_plus().monitoring_timezone == "Europe/Madrid"
 
 
 def test_sync_initial_lookback_must_be_positive() -> None:

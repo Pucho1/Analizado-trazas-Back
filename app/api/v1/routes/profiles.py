@@ -4,26 +4,31 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Response, status
 
-from app.api.v1.dependencies import get_profile_service
+from app.api.v1.dependencies import get_monitoring_service, get_profile_service
 from app.api.v1.errors import (
     DATABASE_ERROR_RESPONSES,
+    INVALID_THRESHOLDS_RESPONSES,
     PROFILE_NAME_TAKEN_RESPONSES,
     PROFILE_NOT_FOUND_RESPONSES,
 )
 from app.api.v1.schemas import (
+    BaselineResponse,
     DiscoveredProfileResponse,
     DiscoveryResponse,
     ProfileCreateRequest,
     ProfileListResponse,
     ProfileResponse,
     ProfileUpdateRequest,
+    ThresholdsUpdateRequest,
 )
+from app.application.monitoring_service import MonitoringService
 from app.application.profile_service import ProfileService
 from app.domain.models import Profile
 
 router = APIRouter(prefix="/profiles", tags=["profiles"], responses=DATABASE_ERROR_RESPONSES)
 
 ProfileServiceDep = Annotated[ProfileService, Depends(get_profile_service)]
+MonitoringServiceDep = Annotated[MonitoringService, Depends(get_monitoring_service)]
 
 
 @router.get("", summary="List profiles")
@@ -101,6 +106,47 @@ async def delete_profile(profile_id: int, service: ProfileServiceDep) -> Respons
     """Delete the profile and, in cascade, all its traces. Cannot be undone."""
     await service.delete(profile_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get(
+    "/{profile_id}/baseline",
+    summary="What is normal for a profile",
+    responses=PROFILE_NOT_FOUND_RESPONSES,
+)
+async def get_baseline(profile_id: int, monitoring: MonitoringServiceDep) -> BaselineResponse:
+    """Learning progress, and median and p95 per trace and per day, as of now."""
+    return BaselineResponse.from_domain(await monitoring.baseline(profile_id))
+
+
+@router.patch(
+    "/{profile_id}/thresholds",
+    summary="Adjust a profile's alert thresholds",
+    responses={**PROFILE_NOT_FOUND_RESPONSES, **INVALID_THRESHOLDS_RESPONSES},
+)
+async def update_thresholds(
+    profile_id: int,
+    body: ThresholdsUpdateRequest,
+    monitoring: MonitoringServiceDep,
+    service: ProfileServiceDep,
+) -> ProfileResponse:
+    """Change the thresholds sent; the rest keep their value."""
+    profile = await monitoring.update_thresholds(profile_id, **body.changes())
+    return await _with_count(service, profile)
+
+
+@router.post(
+    "/{profile_id}/relearn",
+    summary="Relearn a profile's normal",
+    responses=PROFILE_NOT_FOUND_RESPONSES,
+)
+async def relearn(
+    profile_id: int, monitoring: MonitoringServiceDep, service: ProfileServiceDep
+) -> ProfileResponse:
+    """Forget the baseline: the profile learns again from new traces only.
+
+    Use it after changing the model or the prompt.
+    """
+    return await _with_count(service, await monitoring.relearn(profile_id))
 
 
 async def _with_count(service: ProfileService, profile: Profile) -> ProfileResponse:

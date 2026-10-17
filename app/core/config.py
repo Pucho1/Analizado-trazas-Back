@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     sync_timezone: str = "Europe/Madrid"
     # How far back the very first sync reads.
     sync_initial_lookback_days: int = Field(default=30, ge=1)
+    # Time zone of the calendar days used by daily baselines, budgets and alerts.
+    monitoring_timezone: str = "Europe/Madrid"
 
     @field_validator("cors_allowed_origins")
     @classmethod
@@ -58,9 +60,9 @@ class Settings(BaseSettings):
             raise ValueError("SYNC_SCHEDULE must not repeat a time")
         return sorted(schedule)
 
-    @field_validator("sync_timezone")
+    @field_validator("sync_timezone", "monitoring_timezone")
     @classmethod
-    def _validate_sync_timezone(cls, name: str) -> str:
+    def _validate_timezone(cls, name: str) -> str:
         """Accept only IANA time zone names, such as `Europe/Madrid`."""
         try:
             ZoneInfo(name)

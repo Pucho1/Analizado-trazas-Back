@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Protocol
 
 from app.domain.models import DiscoveredGroup, Profile, ProfileRule, SyncRun, Trace, TraceKey
+from app.domain.monitoring import Alert, Baseline, TraceSample
 
 
 class TraceSource(Protocol):
@@ -82,6 +83,59 @@ class ProfileRepository(Protocol):
 
     async def discover_groups(self) -> Sequence[DiscoveredGroup]:
         """Unclassified traces grouped by environment, name and tags, largest first."""
+        ...
+
+
+class MonitoringRepository(Protocol):
+    """What baselines and alerts read and write. `since` = None means "all traces".
+
+    Every method raises `RepositoryError` if the storage is unavailable.
+    """
+
+    async def count_traces(self, profile_id: int, since: datetime | None) -> int:
+        """Number of traces of the profile that started at or after `since`."""
+        ...
+
+    async def latest_traces(
+        self, profile_id: int, since: datetime | None, limit: int
+    ) -> Sequence[TraceSample]:
+        """The `limit` most recent traces of the profile at or after `since`."""
+        ...
+
+    async def first_trace_at(self, profile_id: int, since: datetime | None) -> datetime | None:
+        """Start of the profile's earliest trace at or after `since`; None if none."""
+        ...
+
+    async def traces_between(
+        self, profile_id: int, start: datetime, end: datetime
+    ) -> Sequence[TraceSample]:
+        """The profile's traces that started in [start, end)."""
+        ...
+
+    async def get_baseline(self, profile_id: int) -> Baseline | None:
+        """The profile's stored baseline, or None."""
+        ...
+
+    async def save_baseline(self, profile_id: int, baseline: Baseline) -> None:
+        """Store `baseline` as the profile's baseline, replacing the previous one."""
+        ...
+
+    async def delete_baseline(self, profile_id: int) -> None:
+        """Forget the profile's baseline (no-op if there is none)."""
+        ...
+
+    async def alerts_since(self, profile_id: int, since: datetime) -> Sequence[Alert]:
+        """The profile's alerts created at or after `since`."""
+        ...
+
+    async def save_alerts(self, alerts: Sequence[Alert]) -> None:
+        """Store new alerts."""
+        ...
+
+    async def list_alerts(
+        self, profile_id: int | None, since: datetime | None, limit: int
+    ) -> Sequence[Alert]:
+        """Up to `limit` alerts, newest first, optionally of one profile and from `since`."""
         ...
 
 

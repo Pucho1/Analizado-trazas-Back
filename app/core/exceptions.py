@@ -24,3 +24,7 @@ class ProfileNotFoundError(ObservaError):
 
 class ProfileNameTakenError(ObservaError):
     """Another profile already has that name (names are compared ignoring case)."""
+
+
+class InvalidThresholdsError(ObservaError):
+    """The requested alert thresholds are inconsistent (e.g. warning above critical)."""

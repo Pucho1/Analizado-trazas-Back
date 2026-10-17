@@ -10,6 +10,7 @@ from typing import Annotated
 
 from fastapi import Depends, Request
 
+from app.application.monitoring_service import MonitoringService
 from app.application.profile_service import ProfileService
 from app.application.sync_service import SyncService
 from app.application.trace_service import TraceService
@@ -39,6 +40,12 @@ def get_trace_service(
 def get_profile_service(request: Request) -> ProfileService:
     """Return the profile use cases created by the application lifespan."""
     service: ProfileService = request.app.state.profile_service
+    return service
+
+
+def get_monitoring_service(request: Request) -> MonitoringService:
+    """Return the baseline and alert use cases created by the application lifespan."""
+    service: MonitoringService = request.app.state.monitoring_service
     return service
 
 

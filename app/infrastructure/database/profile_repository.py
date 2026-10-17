@@ -8,7 +8,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.exceptions import ProfileNameTakenError, ProfileNotFoundError
-from app.domain.models import DiscoveredGroup, Profile, ProfileRule, ProfileStatus, TraceKey
+from app.domain.models import (
+    DiscoveredGroup,
+    Profile,
+    ProfileRule,
+    ProfileStatus,
+    Thresholds,
+    TraceKey,
+)
 from app.infrastructure.database.errors import database_errors_as_repository_errors
 from app.infrastructure.database.tables import ProfileRow, TraceRow
 
@@ -23,16 +30,16 @@ class SqlAlchemyProfileRepository:
         self._session_factory = session_factory
 
     async def add(self, name: str, rule: ProfileRule, created_at: datetime) -> Profile:
-        """Insert an active profile and return it with its new id."""
+        """Insert an active profile with default thresholds and return it with its id."""
         row = ProfileRow(
             name=name,
-            environment=rule.environment,
-            trace_name=rule.trace_name,
-            tags=list(rule.tags),
             status=ProfileStatus.ACTIVE.value,
             created_at=created_at,
             archived_at=None,
+            baseline_since=None,
         )
+        _write_rule(row, rule)
+        _write_thresholds(row, Thresholds())
         async with database_errors_as_repository_errors(), self._session_factory() as session:
             session.add(row)
             await _commit_unless_name_taken(session, name)
@@ -51,17 +58,17 @@ class SqlAlchemyProfileRepository:
             return [_to_domain(row) for row in await session.scalars(statement)]
 
     async def update(self, profile: Profile) -> None:
-        """Overwrite name, rule, status and archive date of an existing profile."""
+        """Overwrite every editable field of an existing profile."""
         async with database_errors_as_repository_errors(), self._session_factory() as session:
             row = await session.get(ProfileRow, profile.id)
             if row is None:
                 raise ProfileNotFoundError(f"Profile {profile.id} does not exist")
             row.name = profile.name
-            row.environment = profile.rule.environment
-            row.trace_name = profile.rule.trace_name
-            row.tags = list(profile.rule.tags)
             row.status = profile.status.value
             row.archived_at = profile.archived_at
+            row.baseline_since = profile.baseline_since
+            _write_rule(row, profile.rule)
+            _write_thresholds(row, profile.thresholds)
             await _commit_unless_name_taken(session, profile.name)
 
     async def delete(self, profile_id: int) -> bool:
@@ -159,6 +166,23 @@ async def _commit_unless_name_taken(session: AsyncSession, name: str) -> None:
         raise
 
 
+def _write_rule(row: ProfileRow, rule: ProfileRule) -> None:
+    """Copy `rule` into the row's columns."""
+    row.environment = rule.environment
+    row.trace_name = rule.trace_name
+    row.tags = list(rule.tags)
+
+
+def _write_thresholds(row: ProfileRow, thresholds: Thresholds) -> None:
+    """Copy `thresholds` into the row's columns."""
+    row.warning_factor = thresholds.warning_factor
+    row.critical_factor = thresholds.critical_factor
+    row.daily_budget = thresholds.daily_budget
+    row.min_trace_cost = thresholds.min_trace_cost
+    row.min_daily_cost = thresholds.min_daily_cost
+    row.silence_hours = thresholds.silence_hours
+
+
 def _to_domain(row: ProfileRow) -> Profile:
     """Domain profile for a row."""
     return Profile(
@@ -170,4 +194,13 @@ def _to_domain(row: ProfileRow) -> Profile:
         status=ProfileStatus(row.status),
         created_at=row.created_at,
         archived_at=row.archived_at,
+        thresholds=Thresholds(
+            warning_factor=row.warning_factor,
+            critical_factor=row.critical_factor,
+            daily_budget=row.daily_budget,
+            min_trace_cost=row.min_trace_cost,
+            min_daily_cost=row.min_daily_cost,
+            silence_hours=row.silence_hours,
+        ),
+        baseline_since=row.baseline_since,
     )

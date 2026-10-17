@@ -90,6 +90,15 @@ def test_create_classifies_and_returns_the_profile(client: TestClient) -> None:
         "status": "active",
         "created_at": "2026-10-17T14:00:00Z",
         "archived_at": None,
+        "baseline_since": None,
+        "thresholds": {
+            "warning_factor": 1.0,
+            "critical_factor": 2.0,
+            "daily_budget": None,
+            "min_trace_cost": 0.01,
+            "min_daily_cost": 0.1,
+            "silence_hours": 24,
+        },
         "trace_count": 1,
     }
 

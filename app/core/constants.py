@@ -1,4 +1,5 @@
 from datetime import timedelta
+from decimal import Decimal
 
 # Prefix under which every v1 endpoint is mounted.
 API_V1_PREFIX = "/api/v1"
@@ -16,6 +17,27 @@ DEFAULT_ENVIRONMENT = "default"
 # Profiles. Only this environment is monitored unless a profile says otherwise.
 MONITORED_ENVIRONMENT = "production"
 PROFILE_NAME_MAX_LENGTH = 100
+
+# Baselines (deterministic: median and 95th percentile, no LLM).
+# A profile is "learning" (no anomaly alerts) until it has this many traces.
+LEARNING_TRACES = 100
+# Per-trace baseline: the most recent traces of the profile.
+BASELINE_MAX_TRACES = 1000
+# Per-day baseline: the most recent complete days, and the minimum needed to use it.
+BASELINE_DAYS = 30
+MIN_BASELINE_DAYS = 7
+# Alert thresholds: defaults for new profiles, adjustable per profile.
+DEFAULT_WARNING_FACTOR = Decimal(1)  # warning above 1 x p95
+DEFAULT_CRITICAL_FACTOR = Decimal(2)  # critical above 2 x p95
+DEFAULT_MIN_TRACE_COST = Decimal("0.01")  # USD; cheaper traces never raise cost alerts
+DEFAULT_MIN_DAILY_COST = Decimal("0.10")  # USD; cheaper days never raise cost alerts
+DEFAULT_SILENCE_HOURS = 24
+# Each scan only judges traces and days of at most this far back, so that the first
+# scan after a long backfill does not raise alerts about old data.
+MONITORING_MAX_LOOKBACK = timedelta(days=1)
+# `GET /alerts` page size.
+ALERTS_DEFAULT_LIMIT = 100
+ALERTS_MAX_LIMIT = 500
 
 # Langfuse public API. v2 observations is the only per-trace read path that will survive
 # the removal of `GET /api/public/traces` on Langfuse Cloud.

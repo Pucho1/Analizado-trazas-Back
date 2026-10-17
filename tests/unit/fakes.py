@@ -1,5 +1,6 @@
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -13,9 +14,11 @@ from app.domain.models import (
     ProfileStatus,
     SyncRun,
     SyncStatus,
+    Thresholds,
     Trace,
     TraceKey,
 )
+from app.domain.monitoring import Alert, Baseline, TraceSample
 
 DEFAULT_TIMESTAMP = datetime(2026, 1, 15, 12, 0, tzinfo=UTC)
 
@@ -262,6 +265,7 @@ def make_profile(
     rule: ProfileRule | None = None,
     status: ProfileStatus = ProfileStatus.ACTIVE,
     created_at: datetime = DEFAULT_TIMESTAMP,
+    thresholds: Thresholds | None = None,
 ) -> Profile:
     """Build a valid `Profile`; archived ones get `created_at` as archive date."""
     return Profile(
@@ -271,4 +275,87 @@ def make_profile(
         status=status,
         created_at=created_at,
         archived_at=created_at if status is ProfileStatus.ARCHIVED else None,
+        thresholds=thresholds or Thresholds(),
     )
+
+
+class InMemoryMonitoringRepository:
+    """MonitoringRepository over the traces of an `InMemoryProfileRepository`."""
+
+    def __init__(self, profiles: InMemoryProfileRepository) -> None:
+        """Read traces (and their profile) from `profiles`; no baselines nor alerts yet."""
+        self._profiles = profiles
+        self.baselines: dict[int, Baseline] = {}
+        self.alerts: list[Alert] = []
+
+    async def count_traces(self, profile_id: int, since: datetime | None) -> int:
+        """Traces of the profile at or after `since`."""
+        return len(self._of(profile_id, since))
+
+    async def latest_traces(
+        self, profile_id: int, since: datetime | None, limit: int
+    ) -> Sequence[TraceSample]:
+        """The `limit` most recent traces of the profile."""
+        newest_first = sorted(
+            self._of(profile_id, since), key=lambda s: (s.timestamp, s.id), reverse=True
+        )
+        return newest_first[:limit]
+
+    async def first_trace_at(self, profile_id: int, since: datetime | None) -> datetime | None:
+        """Start of the earliest trace of the profile."""
+        return min((s.timestamp for s in self._of(profile_id, since)), default=None)
+
+    async def traces_between(
+        self, profile_id: int, start: datetime, end: datetime
+    ) -> Sequence[TraceSample]:
+        """Traces of the profile in [start, end)."""
+        return [s for s in self._of(profile_id, start) if s.timestamp < end]
+
+    async def get_baseline(self, profile_id: int) -> Baseline | None:
+        """The stored baseline."""
+        return self.baselines.get(profile_id)
+
+    async def save_baseline(self, profile_id: int, baseline: Baseline) -> None:
+        """Replace the stored baseline."""
+        self.baselines[profile_id] = baseline
+
+    async def delete_baseline(self, profile_id: int) -> None:
+        """Forget the stored baseline."""
+        self.baselines.pop(profile_id, None)
+
+    async def alerts_since(self, profile_id: int, since: datetime) -> Sequence[Alert]:
+        """Alerts of the profile created at or after `since`."""
+        return [a for a in self.alerts if a.profile_id == profile_id and a.created_at >= since]
+
+    async def save_alerts(self, alerts: Sequence[Alert]) -> None:
+        """Store the alerts with consecutive ids."""
+        for alert in alerts:
+            self.alerts.append(replace(alert, id=len(self.alerts) + 1))
+
+    async def list_alerts(
+        self, profile_id: int | None, since: datetime | None, limit: int
+    ) -> Sequence[Alert]:
+        """Alerts newest first, optionally filtered."""
+        found = [
+            a
+            for a in self.alerts
+            if (profile_id is None or a.profile_id == profile_id)
+            and (since is None or a.created_at >= since)
+        ]
+        return sorted(found, key=lambda a: (a.created_at, a.id or 0), reverse=True)[:limit]
+
+    def _of(self, profile_id: int, since: datetime | None) -> list[TraceSample]:
+        """Samples of the profile's traces at or after `since`."""
+        return [
+            TraceSample(
+                id=trace.id,
+                timestamp=trace.timestamp,
+                cost=trace.cost,
+                input_tokens=trace.input_tokens,
+                output_tokens=trace.output_tokens,
+                latency=trace.latency,
+            )
+            for trace in self._profiles.traces.values()
+            if self._profiles.profile_of[trace.id] == profile_id
+            and (since is None or trace.timestamp >= since)
+        ]

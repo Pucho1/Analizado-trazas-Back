@@ -100,6 +100,37 @@ Un perfil agrupa las trazas de una herramienta o agente bajo un nombre de negoci
 - Las trazas se **reclasifican** al crear o cambiar la regla de un perfil y tras cada sincronización.
 - **Archivar**: deja de vigilarse, conserva su historial y sigue recibiendo sus trazas nuevas. **Eliminar**: borra el perfil y, en cascada, sus trazas y observaciones.
 
+## Línea base y alertas
+
+Cálculo determinista (sin IA) tras cada escaneo, para cada perfil **activo** (los archivados no se vigilan).
+
+**Línea base** (lo normal del perfil): mediana y percentil 95 —«el techo de lo normal»— con interpolación lineal y aritmética decimal exacta.
+
+- **Por traza**: coste, tokens de entrada, tokens de salida y latencia de las últimas 1000 trazas.
+- **Por día** (días naturales en `MONITORING_TIMEZONE`): número de consultas y coste de los últimos 30 días completos; los días sin trazas cuentan como 0 y el día en curso no cuenta.
+- **Aprendiendo** hasta reunir 100 trazas: sin alertas de anomalía (el presupuesto sí avisa). La vigilancia diaria necesita además 7 días completos.
+- Al recalcular se dejan fuera los valores que la línea base anterior consideraba críticos.
+- **Reaprender** (`POST /profiles/{id}/relearn`) tras cambiar de modelo o de prompt: solo cuentan las trazas posteriores.
+
+**Umbrales** (por defecto; ajustables por perfil con `PATCH /profiles/{id}/thresholds`):
+
+| Umbral | Por defecto | Se aplica a |
+| --- | --- | --- |
+| Aviso | > 1 × p95 | coste y latencia por traza; consultas y coste por día |
+| Crítico | > 2 × p95 | lo mismo |
+| Presupuesto diario | sin presupuesto | coste del día; avisa siempre, también aprendiendo |
+| Mínimo para molestar | 0,01 $ por traza · 0,10 $ por día | solo alertas de coste |
+| Periodo de silencio | 24 h | misma alerta (perfil, tipo, nivel, métrica y día); subir de aviso a crítico la rompe |
+
+- Las comparaciones son estrictas: un valor igual al umbral es normal. Si el p95 es 0, esa métrica no se evalúa.
+- Una alerta por traza agrupa todas las trazas que cruzan en un escaneo (cuántas, la peor y su valor).
+- Cada escaneo solo juzga datos de las últimas 24 h, para no avisar de datos antiguos tras una carga inicial.
+- Las alertas se guardan en `alerts` (`GET /alerts`) con `notified_at` vacío hasta que se envíen.
+
+| Variable              | Por defecto     | Descripción                                          |
+| --------------------- | --------------- | ---------------------------------------------------- |
+| `MONITORING_TIMEZONE` | `Europe/Madrid` | Zona horaria de los días de la línea base y alertas. |
+
 ## Arranque
 
 ```bash
@@ -132,6 +163,10 @@ curl "http://127.0.0.1:8000/api/v1/traces/summary?range=7d"
 | `PATCH /api/v1/profiles/{id}` | Renombra y/o cambia la regla (reclasifica si cambia la regla).               |
 | `POST /api/v1/profiles/{id}/archive` · `/unarchive` | Deja de vigilar el perfil (conserva su historial) o lo reactiva. |
 | `DELETE /api/v1/profiles/{id}` | Borra el perfil **y todas sus trazas**. No se puede deshacer.               |
+| `GET /api/v1/profiles/{id}/baseline` | Aprendiendo o listo, mediana y p95 por traza y por día.               |
+| `PATCH /api/v1/profiles/{id}/thresholds` | Ajusta umbrales (`"daily_budget": null` quita el presupuesto).    |
+| `POST /api/v1/profiles/{id}/relearn` | Vuelve a aprender desde ahora.                                        |
+| `GET /api/v1/alerts`          | Alertas, de la más reciente a la más antigua (`profile_id`, `since`, `limit`). |
 
 Los de trazas aceptan `range` = `24h` (por defecto), `7d` o `30d`.
 
@@ -143,6 +178,7 @@ Errores (`error.code` en el cuerpo):
 - `409` `sync_already_running` (solo `POST /sync`): ya hay una sincronización en curso.
 - `404` `profile_not_found`: no existe un perfil con ese id.
 - `409` `profile_name_taken`: ya hay un perfil con ese nombre (sin distinguir mayúsculas).
+- `400` `invalid_thresholds`: los umbrales resultantes serían incoherentes (p. ej. aviso ≥ crítico).
 - `422`: parámetro o cuerpo inválido (p. ej. `range=1y`, nombre vacío).
 
 ## Calidad

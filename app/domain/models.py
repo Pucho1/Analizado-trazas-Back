@@ -1,9 +1,17 @@
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
 from statistics import fmean
+
+from app.core.constants import (
+    DEFAULT_CRITICAL_FACTOR,
+    DEFAULT_MIN_DAILY_COST,
+    DEFAULT_MIN_TRACE_COST,
+    DEFAULT_SILENCE_HOURS,
+    DEFAULT_WARNING_FACTOR,
+)
 
 
 class TimeRange(StrEnum):
@@ -146,8 +154,46 @@ class ProfileStatus(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class Thresholds:
+    """When a profile raises alerts. Amounts are in USD.
+
+    Anomaly alerts fire above `warning_factor` x p95 (warning) and above
+    `critical_factor` x p95 (critical). Cost alerts are skipped for traces cheaper
+    than `min_trace_cost` and days cheaper than `min_daily_cost`. The daily budget,
+    if any, always applies. The same alert is not repeated within `silence_hours`.
+    """
+
+    warning_factor: Decimal = DEFAULT_WARNING_FACTOR
+    critical_factor: Decimal = DEFAULT_CRITICAL_FACTOR
+    daily_budget: Decimal | None = None
+    min_trace_cost: Decimal = DEFAULT_MIN_TRACE_COST
+    min_daily_cost: Decimal = DEFAULT_MIN_DAILY_COST
+    silence_hours: int = DEFAULT_SILENCE_HOURS
+
+    def __post_init__(self) -> None:
+        """Require 0 < warning < critical, non-negative minimums and a positive budget."""
+        if not Decimal(0) < self.warning_factor < self.critical_factor:
+            raise ValueError("Thresholds need 0 < warning_factor < critical_factor")
+        if self.daily_budget is not None and self.daily_budget <= 0:
+            raise ValueError("The daily budget must be positive")
+        if self.min_trace_cost < 0 or self.min_daily_cost < 0:
+            raise ValueError("Minimum costs must not be negative")
+        if self.silence_hours <= 0:
+            raise ValueError("The silence period must be at least one hour")
+
+    @property
+    def silence(self) -> timedelta:
+        """The silence period."""
+        return timedelta(hours=self.silence_hours)
+
+
+@dataclass(frozen=True, slots=True)
 class Profile:
-    """A group of traces that stands for one tool or agent, with a business name."""
+    """A group of traces that stands for one tool or agent, with a business name.
+
+    Its baseline only uses traces from `baseline_since` on (None = all of them);
+    relearning moves that date to now.
+    """
 
     id: int
     name: str
@@ -155,6 +201,8 @@ class Profile:
     status: ProfileStatus
     created_at: datetime
     archived_at: datetime | None = None
+    thresholds: Thresholds = field(default_factory=Thresholds)
+    baseline_since: datetime | None = None
 
     def __post_init__(self) -> None:
         """Require a name and an archive date exactly when archived."""
