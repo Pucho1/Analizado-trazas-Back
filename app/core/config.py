@@ -40,6 +40,42 @@ class Settings(BaseSettings):
     sync_initial_lookback_days: int = Field(default=30, ge=1)
     # Time zone of the calendar days used by daily baselines, budgets and alerts.
     monitoring_timezone: str = "Europe/Madrid"
+    # Daily report: sent at this local time (after the morning scan) about the day before.
+    daily_report_time: time = time(8, 30)
+
+    # Email channel (SMTP). Unset = channel not configured. Port 465 uses implicit TLS;
+    # any other port upgrades with STARTTLS.
+    smtp_host: str | None = None
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_username: str | None = None
+    smtp_password: SecretStr | None = None
+    email_from: str | None = None
+    email_to: str | None = None
+
+    # Telegram channel. The token comes from @BotFather; the chat id from
+    # GET /api/v1/notifications/telegram/chats after writing to the bot once.
+    telegram_bot_token: SecretStr | None = None
+    telegram_chat_id: str | None = None
+
+    @property
+    def email_configured(self) -> bool:
+        """Whether every variable the email channel needs is set."""
+        return all(
+            (self.smtp_host, self.smtp_username, self.smtp_password, self.email_from, self.email_to)
+        )
+
+    @property
+    def telegram_configured(self) -> bool:
+        """Whether the Telegram channel can send (token and chat id)."""
+        return self.telegram_bot_token is not None and bool(self.telegram_chat_id)
+
+    @field_validator("email_from", "email_to")
+    @classmethod
+    def _validate_address(cls, address: str | None) -> str | None:
+        """Require something that looks like an email address."""
+        if address is not None and "@" not in address:
+            raise ValueError(f"{address!r} is not an email address")
+        return address
 
     @field_validator("cors_allowed_origins")
     @classmethod

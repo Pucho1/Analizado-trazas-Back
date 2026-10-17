@@ -1,11 +1,11 @@
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from app.core.constants import DEFAULT_EMAIL_SECTIONS, DEFAULT_TELEGRAM_SECTIONS
-from app.core.exceptions import ProfileNameTakenError, ProfileNotFoundError
+from app.core.exceptions import NotificationError, ProfileNameTakenError, ProfileNotFoundError
 from app.domain.events import EventMapping, StepCount
 from app.domain.models import (
     DiscoveredGroup,
@@ -21,6 +21,14 @@ from app.domain.models import (
     TraceKey,
 )
 from app.domain.monitoring import Alert, Baseline, TraceSample
+from app.domain.notifications import (
+    Delivery,
+    DeliveryKind,
+    DeliveryStatus,
+    NotificationFailure,
+    OutgoingMessage,
+    TelegramChat,
+)
 from app.domain.reporting import Channel, ChannelSettings
 from app.domain.spend import SpendTotals
 
@@ -348,6 +356,14 @@ class InMemoryMonitoringRepository:
         ]
         return sorted(found, key=lambda a: (a.created_at, a.id or 0), reverse=True)[:limit]
 
+    async def pending_alerts(self, since: datetime) -> Sequence[Alert]:
+        """Alerts created at or after `since` and not yet notified."""
+        return [a for a in self.alerts if a.created_at >= since and a.notified_at is None]
+
+    async def mark_notified(self, alert_ids: Sequence[int], at: datetime) -> None:
+        """Set `notified_at` on the given alerts."""
+        self.alerts = [replace(a, notified_at=at) if a.id in alert_ids else a for a in self.alerts]
+
     def _of(self, profile_id: int, since: datetime | None) -> list[TraceSample]:
         """Samples of the profile's traces at or after `since`."""
         return [
@@ -440,3 +456,56 @@ class InMemoryReportSettingsRepository:
     async def save(self, settings: ChannelSettings) -> None:
         """Replace the channel's settings."""
         self.settings[settings.channel] = settings
+
+
+class FakeNotifier:
+    """Notifier that records what it sends, or fails with a given reason."""
+
+    def __init__(self, failure: NotificationFailure | None = None) -> None:
+        """Succeed unless `failure` is given."""
+        self.failure = failure
+        self.sent: list[OutgoingMessage] = []
+
+    async def send(self, message: OutgoingMessage) -> None:
+        """Record `message`, or raise `NotificationError`."""
+        if self.failure is not None:
+            raise NotificationError(self.failure.value, "fake failure")
+        self.sent.append(message)
+
+
+class InMemoryDeliveryRepository:
+    """DeliveryRepository backed by a list."""
+
+    def __init__(self) -> None:
+        """No deliveries."""
+        self.deliveries: list[Delivery] = []
+
+    async def record(self, delivery: Delivery) -> None:
+        """Store the delivery with the next id."""
+        self.deliveries.append(replace(delivery, id=len(self.deliveries) + 1))
+
+    async def daily_report_sent(self, channel: Channel, day: date) -> bool:
+        """Whether a successful daily report about `day` went through `channel`."""
+        return any(
+            d.channel is channel
+            and d.kind is DeliveryKind.DAILY_REPORT
+            and d.day == day
+            and d.status is DeliveryStatus.SENT
+            for d in self.deliveries
+        )
+
+    async def list_deliveries(self, limit: int) -> Sequence[Delivery]:
+        """Newest first."""
+        return list(reversed(self.deliveries))[:limit]
+
+
+class FakeChatDirectory:
+    """TelegramChatDirectory with fixed chats."""
+
+    def __init__(self, chats: Sequence[TelegramChat] = ()) -> None:
+        """Serve `chats`."""
+        self.chats = list(chats)
+
+    async def list_chats(self) -> Sequence[TelegramChat]:
+        """The fixed chats."""
+        return self.chats

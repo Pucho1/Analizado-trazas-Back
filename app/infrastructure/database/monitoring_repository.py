@@ -5,7 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import ColumnElement, Select, delete, func, insert, select, true
+from sqlalchemy import ColumnElement, Select, delete, func, insert, select, true, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -142,6 +142,27 @@ class SqlAlchemyMonitoringRepository:
         if since is not None:
             statement = statement.where(AlertRow.created_at >= since)
         return await self._alerts(statement.limit(limit))
+
+    async def pending_alerts(self, since: datetime) -> Sequence[Alert]:
+        """Alerts created at or after `since` and not yet notified, oldest first."""
+        statement = (
+            select(AlertRow)
+            .where(AlertRow.created_at >= since, AlertRow.notified_at.is_(None))
+            .order_by(AlertRow.created_at, AlertRow.id)
+        )
+        return await self._alerts(statement)
+
+    async def mark_notified(self, alert_ids: Sequence[int], at: datetime) -> None:
+        """Set `notified_at` on the given alerts."""
+        if not alert_ids:
+            return
+        statement = update(AlertRow).where(AlertRow.id.in_(alert_ids)).values(notified_at=at)
+        async with (
+            database_errors_as_repository_errors(),
+            self._session_factory() as session,
+            session.begin(),
+        ):
+            await session.execute(statement)
 
     async def _samples(self, statement: _SampleSelect) -> list[TraceSample]:
         """Run a `_samples()` query."""

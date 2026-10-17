@@ -8,15 +8,19 @@ from fastapi.responses import JSONResponse
 
 from app.api.v1.schemas import ErrorCode, ErrorDetail, ErrorResponse
 from app.core.exceptions import (
+    ChannelNotConfiguredError,
     InvalidThresholdsError,
+    NotificationError,
     ProfileNameTakenError,
     ProfileNotFoundError,
+    ReportAlreadySentError,
     RepositoryError,
     SyncAlreadyRunningError,
     TraceSourceAuthenticationError,
     TraceSourceError,
     UnknownReportSectionError,
 )
+from app.domain.notifications import NotificationFailure
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +80,29 @@ UNKNOWN_SECTION_RESPONSES: dict[int | str, dict[str, Any]] = {
 }
 
 
+NOTIFICATION_RESPONSES: dict[int | str, dict[str, Any]] = {
+    status.HTTP_409_CONFLICT: {
+        "model": ErrorResponse,
+        "description": "`channel_not_configured`: the channel's variables are missing from "
+        "`.env`; `report_already_sent`: that day's report already reached the channel.",
+    },
+    status.HTTP_502_BAD_GATEWAY: {
+        "model": ErrorResponse,
+        "description": "`notification_failed`: the provider refused or could not be reached; "
+        "the message says why (credentials, recipient, network). Recorded as a delivery.",
+    },
+}
+
+_NOTIFICATION_MESSAGES = {
+    NotificationFailure.AUTH_FAILED: "The provider rejected the credentials in .env "
+    "(SMTP password or Telegram bot token).",
+    NotificationFailure.REJECTED: "The provider refused the message: check the recipient "
+    "(EMAIL_TO, TELEGRAM_CHAT_ID) and that you wrote to the bot once.",
+    NotificationFailure.UNAVAILABLE: "The provider could not be reached; try again later.",
+    NotificationFailure.NOT_CONFIGURED: "The channel is not fully configured in .env.",
+}
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """Attach the handlers that map domain errors to HTTP responses.
 
@@ -90,6 +117,9 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(ProfileNameTakenError, _handle_profile_name_taken)
     app.add_exception_handler(InvalidThresholdsError, _handle_invalid_thresholds)
     app.add_exception_handler(UnknownReportSectionError, _handle_unknown_section)
+    app.add_exception_handler(ChannelNotConfiguredError, _handle_channel_not_configured)
+    app.add_exception_handler(ReportAlreadySentError, _handle_report_already_sent)
+    app.add_exception_handler(NotificationError, _handle_notification_failed)
 
 
 async def _handle_auth_error(request: Request, exc: Exception) -> JSONResponse:
@@ -163,6 +193,33 @@ async def _handle_unknown_section(request: Request, exc: Exception) -> JSONRespo
         ErrorCode.UNKNOWN_REPORT_SECTION,
         "Unknown report section; see GET /api/v1/reports/sections.",
     )
+
+
+async def _handle_channel_not_configured(request: Request, exc: Exception) -> JSONResponse:
+    """Respond 409 when a channel lacks its `.env` variables."""
+    return _error_response(
+        status.HTTP_409_CONFLICT,
+        ErrorCode.CHANNEL_NOT_CONFIGURED,
+        "The channel is not configured: add its variables to .env and restart.",
+    )
+
+
+async def _handle_report_already_sent(request: Request, exc: Exception) -> JSONResponse:
+    """Respond 409 when that day's report already reached the channel."""
+    return _error_response(
+        status.HTTP_409_CONFLICT,
+        ErrorCode.REPORT_ALREADY_SENT,
+        "That day's report already reached this channel.",
+    )
+
+
+async def _handle_notification_failed(request: Request, exc: Exception) -> JSONResponse:
+    """Respond 502 when the provider refused or could not be reached."""
+    reason = getattr(exc, "reason", NotificationFailure.UNAVAILABLE.value)
+    message = _NOTIFICATION_MESSAGES.get(
+        NotificationFailure(reason), _NOTIFICATION_MESSAGES[NotificationFailure.UNAVAILABLE]
+    )
+    return _error_response(status.HTTP_502_BAD_GATEWAY, ErrorCode.NOTIFICATION_FAILED, message)
 
 
 def _error_response(status_code: int, code: ErrorCode, message: str) -> JSONResponse:

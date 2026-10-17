@@ -5,21 +5,28 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 
-from app.api.v1.dependencies import get_report_service
-from app.api.v1.errors import DATABASE_ERROR_RESPONSES, UNKNOWN_SECTION_RESPONSES
+from app.api.v1.dependencies import get_notification_service, get_report_service
+from app.api.v1.errors import (
+    DATABASE_ERROR_RESPONSES,
+    NOTIFICATION_RESPONSES,
+    UNKNOWN_SECTION_RESPONSES,
+)
 from app.api.v1.schemas import (
     ChannelSettingsRequest,
     ChannelSettingsResponse,
+    DeliveryResponse,
     RenderedReportResponse,
     ReportSectionResponse,
     ReportSectionsResponse,
 )
+from app.application.notification_service import NotificationService
 from app.application.reports.service import ReportService
 from app.domain.reporting import Channel
 
 router = APIRouter(prefix="/reports", tags=["reports"], responses=DATABASE_ERROR_RESPONSES)
 
 ReportServiceDep = Annotated[ReportService, Depends(get_report_service)]
+NotificationServiceDep = Annotated[NotificationService, Depends(get_notification_service)]
 
 
 @router.get("/sections", summary="List report sections")
@@ -44,8 +51,14 @@ async def get_settings(channel: Channel, service: ReportServiceDep) -> ChannelSe
 async def put_settings(
     channel: Channel, body: ChannelSettingsRequest, service: ReportServiceDep
 ) -> ChannelSettingsResponse:
-    """Replace the channel's settings."""
-    settings = await service.update_settings(channel, enabled=body.enabled, sections=body.sections)
+    """Replace the channel's settings (alerts and scan notes keep their value if omitted)."""
+    settings = await service.update_settings(
+        channel,
+        enabled=body.enabled,
+        sections=body.sections,
+        alerts_enabled=body.alerts_enabled,
+        scan_summary_enabled=body.scan_summary_enabled,
+    )
     return ChannelSettingsResponse.from_domain(settings)
 
 
@@ -67,3 +80,15 @@ async def preview_daily(
         content_type=rendered.content_type,
         body=rendered.body,
     )
+
+
+@router.post("/daily/send", summary="Send the daily report now", responses=NOTIFICATION_RESPONSES)
+async def send_daily(
+    notifications: NotificationServiceDep,
+    channel: Annotated[Channel, Query(description="Channel to send it through.")],
+    day: Annotated[
+        date | None, Query(description="Local day the report is about; default yesterday.")
+    ] = None,
+) -> DeliveryResponse:
+    """Send the daily report through the channel now (once per channel and day)."""
+    return DeliveryResponse.from_domain(await notifications.send_daily_report(channel, day))

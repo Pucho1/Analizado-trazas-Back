@@ -1,10 +1,11 @@
 from collections.abc import Mapping, Sequence
-from datetime import datetime
+from datetime import date, datetime
 from typing import Protocol
 
 from app.domain.events import EventMapping, StepCount
 from app.domain.models import DiscoveredGroup, Profile, ProfileRule, SyncRun, Trace, TraceKey
 from app.domain.monitoring import Alert, Baseline, TraceSample
+from app.domain.notifications import Delivery, OutgoingMessage, TelegramChat
 from app.domain.reporting import Channel, ChannelSettings
 from app.domain.spend import SpendTotals
 
@@ -139,6 +140,46 @@ class MonitoringRepository(Protocol):
         self, profile_id: int | None, since: datetime | None, limit: int
     ) -> Sequence[Alert]:
         """Up to `limit` alerts, newest first, optionally of one profile and from `since`."""
+        ...
+
+    async def pending_alerts(self, since: datetime) -> Sequence[Alert]:
+        """Alerts created at or after `since` and not yet notified, oldest first."""
+        ...
+
+    async def mark_notified(self, alert_ids: Sequence[int], at: datetime) -> None:
+        """Record that these alerts were delivered at `at`."""
+        ...
+
+
+class Notifier(Protocol):
+    """Delivers messages through one channel (email, Telegram...)."""
+
+    async def send(self, message: OutgoingMessage) -> None:
+        """Deliver `message`; raise `NotificationError` (never with secrets) on failure."""
+        ...
+
+
+class TelegramChatDirectory(Protocol):
+    """The chats that have written to the bot, to find the chat id to configure."""
+
+    async def list_chats(self) -> Sequence[TelegramChat]:
+        """Chats with recent messages to the bot; raises `NotificationError`."""
+        ...
+
+
+class DeliveryRepository(Protocol):
+    """Record of every delivery attempt."""
+
+    async def record(self, delivery: Delivery) -> None:
+        """Store a delivery."""
+        ...
+
+    async def daily_report_sent(self, channel: Channel, day: date) -> bool:
+        """Whether the daily report about `day` already reached `channel`."""
+        ...
+
+    async def list_deliveries(self, limit: int) -> Sequence[Delivery]:
+        """The `limit` most recent deliveries, newest first."""
         ...
 
 

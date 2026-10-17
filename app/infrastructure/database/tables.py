@@ -39,6 +39,7 @@ from app.core.constants import (
 )
 from app.domain.models import ObservationLevel, ProfileStatus, SyncStatus, SyncTrigger
 from app.domain.monitoring import AlertKind, AlertMetric, AlertScope, Severity
+from app.domain.notifications import DeliveryKind, DeliveryStatus
 from app.domain.reporting import Channel
 
 # Stable constraint and index names, so that migrations are reproducible.
@@ -184,6 +185,41 @@ class ReportSettingsRow(Base):
     channel: Mapped[str] = mapped_column(Text, primary_key=True)
     enabled: Mapped[bool] = mapped_column(Boolean)
     sections: Mapped[list[str]] = mapped_column(ARRAY(Text))
+    alerts_enabled: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
+    scan_summary_enabled: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
+
+
+class DeliveryRow(Base):
+    """One attempt to send something through a channel.
+
+    The partial unique index makes a second successful daily report for the same
+    channel and day impossible.
+    """
+
+    __tablename__ = "deliveries"
+    __table_args__ = (
+        CheckConstraint(f"channel IN ({_sql_values(Channel)})", name="channel"),
+        CheckConstraint(f"kind IN ({_sql_values(DeliveryKind)})", name="kind"),
+        CheckConstraint(f"status IN ({_sql_values(DeliveryStatus)})", name="status"),
+        Index(
+            "uq_deliveries_daily_report",
+            "channel",
+            "day",
+            unique=True,
+            postgresql_where=text(
+                f"kind = '{DeliveryKind.DAILY_REPORT.value}' "
+                f"AND status = '{DeliveryStatus.SENT.value}'"
+            ),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    channel: Mapped[str] = mapped_column(Text)
+    kind: Mapped[str] = mapped_column(Text)
+    day: Mapped[date | None] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(Text)
+    error_code: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
 
 class TraceRow(Base):

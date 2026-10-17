@@ -32,3 +32,20 @@ class InvalidThresholdsError(ObservaError):
 
 class UnknownReportSectionError(ObservaError):
     """A report setting names a section that is not registered."""
+
+
+class ChannelNotConfiguredError(ObservaError):
+    """The channel's variables are missing from `.env`."""
+
+
+class ReportAlreadySentError(ObservaError):
+    """The daily report about that day already reached that channel."""
+
+
+class NotificationError(ObservaError):
+    """A message could not be delivered; `reason` says why without leaking secrets."""
+
+    def __init__(self, reason: str, message: str) -> None:
+        """Keep the machine-readable `reason` (a `NotificationFailure` value)."""
+        super().__init__(message)
+        self.reason = reason

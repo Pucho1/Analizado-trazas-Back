@@ -153,7 +153,13 @@ class SqlAlchemyReportSettingsRepository:
             row = await session.get(ReportSettingsRow, channel.value)
         if row is None:
             return ChannelSettings(channel, enabled=True, sections=_DEFAULT_SECTIONS[channel])
-        return ChannelSettings(channel, enabled=row.enabled, sections=tuple(row.sections))
+        return ChannelSettings(
+            channel,
+            enabled=row.enabled,
+            sections=tuple(row.sections),
+            alerts_enabled=row.alerts_enabled,
+            scan_summary_enabled=row.scan_summary_enabled,
+        )
 
     async def save(self, settings: ChannelSettings) -> None:
         """Insert or replace the channel's settings."""
@@ -161,11 +167,13 @@ class SqlAlchemyReportSettingsRepository:
             "channel": settings.channel.value,
             "enabled": settings.enabled,
             "sections": list(settings.sections),
+            "alerts_enabled": settings.alerts_enabled,
+            "scan_summary_enabled": settings.scan_summary_enabled,
         }
         upsert = pg_insert(ReportSettingsRow).values(values)
         upsert = upsert.on_conflict_do_update(
             index_elements=[ReportSettingsRow.channel],
-            set_={"enabled": upsert.excluded.enabled, "sections": upsert.excluded.sections},
+            set_={key: upsert.excluded[key] for key in values if key != "channel"},
         )
         async with (
             database_errors_as_repository_errors(),

@@ -14,6 +14,7 @@ from typing import Annotated, Any
 from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 from app.application.monitoring_service import BaselineView
+from app.application.notification_service import ChannelStatus
 from app.application.profile_service import ProfileOverview
 from app.application.spend_service import SpendSummary
 from app.application.sync_service import SyncState
@@ -47,6 +48,12 @@ from app.domain.monitoring import (
     DayMetric,
     Severity,
     TraceMetric,
+)
+from app.domain.notifications import (
+    Delivery,
+    DeliveryKind,
+    DeliveryStatus,
+    NotificationFailure,
 )
 from app.domain.reporting import Channel, ChannelSettings
 from app.domain.spend import CostDriver, PeriodComparison, PeriodKind, SpendTotals
@@ -128,6 +135,9 @@ class ErrorCode(StrEnum):
     PROFILE_NAME_TAKEN = "profile_name_taken"
     INVALID_THRESHOLDS = "invalid_thresholds"
     UNKNOWN_REPORT_SECTION = "unknown_report_section"
+    CHANNEL_NOT_CONFIGURED = "channel_not_configured"
+    NOTIFICATION_FAILED = "notification_failed"
+    REPORT_ALREADY_SENT = "report_already_sent"
 
 
 ProfileName = Annotated[
@@ -715,25 +725,35 @@ class ReportSectionsResponse(BaseModel):
 
 
 class ChannelSettingsResponse(BaseModel):
-    """Which sections a channel's daily report has, in order."""
+    """What a channel receives: daily report (with its sections), alerts, scan notes."""
 
     channel: Channel
-    enabled: bool
+    enabled: bool = Field(description="Daily report through this channel.")
     sections: list[str]
+    alerts_enabled: bool = Field(description="Alerts after each scan.")
+    scan_summary_enabled: bool = Field(description="A short note after every scan.")
 
     @classmethod
     def from_domain(cls, settings: ChannelSettings) -> ChannelSettingsResponse:
         """Response body for domain settings."""
         return cls(
-            channel=settings.channel, enabled=settings.enabled, sections=list(settings.sections)
+            channel=settings.channel,
+            enabled=settings.enabled,
+            sections=list(settings.sections),
+            alerts_enabled=settings.alerts_enabled,
+            scan_summary_enabled=settings.scan_summary_enabled,
         )
 
 
 class ChannelSettingsRequest(BaseModel):
-    """Body of `PUT /reports/settings/{channel}`."""
+    """Body of `PUT /reports/settings/{channel}`; omitted optional fields keep their value."""
 
-    enabled: bool
+    enabled: bool = Field(description="Daily report through this channel.")
     sections: list[str] = Field(description="Section keys in order (see GET /reports/sections).")
+    alerts_enabled: bool | None = Field(default=None, description="Alerts after each scan.")
+    scan_summary_enabled: bool | None = Field(
+        default=None, description="A short note after every scan."
+    )
 
     @model_validator(mode="after")
     def _unique_sections(self) -> ChannelSettingsRequest:
@@ -751,3 +771,76 @@ class RenderedReportResponse(BaseModel):
     subject: str
     content_type: str
     body: str
+
+
+class ChannelStatusResponse(BaseModel):
+    """A channel: whether `.env` configures it (secrets are never shown) and its settings."""
+
+    channel: Channel
+    configured: bool
+    settings: ChannelSettingsResponse
+
+
+class ChannelsResponse(BaseModel):
+    """Every channel."""
+
+    channels: list[ChannelStatusResponse]
+
+    @classmethod
+    def from_domain(cls, statuses: Sequence[ChannelStatus]) -> ChannelsResponse:
+        """Response body for the service's channel statuses."""
+        return cls(
+            channels=[
+                ChannelStatusResponse(
+                    channel=status.channel,
+                    configured=status.configured,
+                    settings=ChannelSettingsResponse.from_domain(status.settings),
+                )
+                for status in statuses
+            ]
+        )
+
+
+class DeliveryResponse(BaseModel):
+    """One attempt to send something through a channel."""
+
+    id: int | None
+    channel: Channel
+    kind: DeliveryKind
+    status: DeliveryStatus
+    day: date | None = Field(description="Day a daily report is about.")
+    error_code: NotificationFailure | None = Field(description="Why it failed; null if sent.")
+    created_at: datetime
+
+    @classmethod
+    def from_domain(cls, delivery: Delivery) -> DeliveryResponse:
+        """Response body for a domain delivery."""
+        return cls(
+            id=delivery.id,
+            channel=delivery.channel,
+            kind=delivery.kind,
+            status=delivery.status,
+            day=delivery.day,
+            error_code=delivery.error_code,
+            created_at=delivery.created_at,
+        )
+
+
+class DeliveriesResponse(BaseModel):
+    """Deliveries, newest first."""
+
+    deliveries: list[DeliveryResponse]
+
+
+class TelegramChatResponse(BaseModel):
+    """A chat that wrote to the bot: copy its `id` to TELEGRAM_CHAT_ID."""
+
+    id: str
+    name: str
+    kind: str
+
+
+class TelegramChatsResponse(BaseModel):
+    """Chats with recent messages to the bot."""
+
+    chats: list[TelegramChatResponse]

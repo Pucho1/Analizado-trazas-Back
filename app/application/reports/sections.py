@@ -179,40 +179,48 @@ class AlertsSection:
         """Nothing if no alerts: silence means everything went well."""
         blocks: list[Block] = []
         for profile_day in data.profiles:
-            if profile_day.alerts:
-                blocks.append(Subheading(profile_day.profile.name))
-                blocks.extend(self._fact(alert) for alert in profile_day.alerts)
+            blocks.extend(alert_blocks(profile_day.profile.name, profile_day.alerts))
         return Section(self.key, self.title, tuple(blocks)) if blocks else None
 
-    @staticmethod
-    def _fact(alert: Alert) -> Fact:
-        """One alert in business words."""
-        what = _ALERT_WHAT.get((alert.kind, alert.scope, alert.metric), "Valor fuera de lo normal")
-        tone = Tone.CRITICAL if alert.severity is Severity.CRITICAL else Tone.ATTENTION
-        if alert.kind is AlertKind.BUDGET:
-            return Fact(
-                what,
-                money(alert.observed),
-                f"Presupuesto: {money(alert.threshold)}. Qué hacer: sube el presupuesto o "
-                "limita el uso.",
-                tone,
-            )
-        normal = alert.baseline_p95 if alert.baseline_p95 is not None else alert.threshold
-        if alert.metric is AlertMetric.LATENCY:
-            value, limit = f"la peor tardó {seconds(alert.observed)}", seconds(normal)
-        elif alert.metric is AlertMetric.QUERY_COUNT:
-            value, limit = _queries(int(alert.observed)), number(normal)
-        else:
-            value, limit = money(alert.observed), money(normal)
-        affected = (
-            f"{plural(alert.affected_count, 'consulta afectada', 'consultas afectadas')}. "
-            if alert.scope is AlertScope.TRACE
-            else ""
+
+def alert_blocks(profile_name: str, alerts: Sequence[Alert]) -> list[Block]:
+    """A profile's alerts under its name (nothing if there are none).
+
+    Shared by the daily report and the alert messages sent after each scan.
+    """
+    if not alerts:
+        return []
+    return [Subheading(profile_name), *(alert_fact(alert) for alert in alerts)]
+
+
+def alert_fact(alert: Alert) -> Fact:
+    """One alert in business words: what, how much, what is normal and what to do."""
+    what = _ALERT_WHAT.get((alert.kind, alert.scope, alert.metric), "Valor fuera de lo normal")
+    tone = Tone.CRITICAL if alert.severity is Severity.CRITICAL else Tone.ATTENTION
+    if alert.kind is AlertKind.BUDGET:
+        return Fact(
+            what,
+            money(alert.observed),
+            f"Presupuesto: {money(alert.threshold)}. Qué hacer: sube el presupuesto o "
+            "limita el uso.",
+            tone,
         )
-        todo = _ALERT_TODO.get(
-            alert.metric, "revisa si cambió el modelo o si llegan preguntas mucho más largas."
-        )
-        return Fact(what, value, f"{affected}Lo normal: hasta {limit}. Qué hacer: {todo}", tone)
+    normal = alert.baseline_p95 if alert.baseline_p95 is not None else alert.threshold
+    if alert.metric is AlertMetric.LATENCY:
+        value, limit = f"la peor tardó {seconds(alert.observed)}", seconds(normal)
+    elif alert.metric is AlertMetric.QUERY_COUNT:
+        value, limit = _queries(int(alert.observed)), number(normal)
+    else:
+        value, limit = money(alert.observed), money(normal)
+    affected = (
+        f"{plural(alert.affected_count, 'consulta afectada', 'consultas afectadas')}. "
+        if alert.scope is AlertScope.TRACE
+        else ""
+    )
+    todo = _ALERT_TODO.get(
+        alert.metric, "revisa si cambió el modelo o si llegan preguntas mucho más largas."
+    )
+    return Fact(what, value, f"{affected}Lo normal: hasta {limit}. Qué hacer: {todo}", tone)
 
 
 class BusinessEventsSection:

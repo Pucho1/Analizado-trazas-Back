@@ -47,13 +47,33 @@ class ReportService:
         return await self._settings.get(channel)
 
     async def update_settings(
-        self, channel: Channel, *, enabled: bool, sections: Sequence[str]
+        self,
+        channel: Channel,
+        *,
+        enabled: bool,
+        sections: Sequence[str],
+        alerts_enabled: bool | None = None,
+        scan_summary_enabled: bool | None = None,
     ) -> ChannelSettings:
-        """Replace the channel's settings; every section must be registered."""
+        """Replace the channel's settings; every section must be registered.
+
+        `alerts_enabled` and `scan_summary_enabled` keep their value when None.
+        """
         unknown = [key for key in sections if self._registry.get(key) is None]
         if unknown:
             raise UnknownReportSectionError(f"Unknown report sections: {unknown}")
-        settings = ChannelSettings(channel, enabled=enabled, sections=tuple(sections))
+        current = await self._settings.get(channel)
+        settings = ChannelSettings(
+            channel,
+            enabled=enabled,
+            sections=tuple(sections),
+            alerts_enabled=current.alerts_enabled if alerts_enabled is None else alerts_enabled,
+            scan_summary_enabled=(
+                current.scan_summary_enabled
+                if scan_summary_enabled is None
+                else scan_summary_enabled
+            ),
+        )
         await self._settings.save(settings)
         return settings
 

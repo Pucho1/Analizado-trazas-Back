@@ -54,6 +54,14 @@ DEFAULT_EMAIL_SECTIONS = (
 )
 DEFAULT_TELEGRAM_SECTIONS = ("overview", "alerts", "business_events")
 
+# Notifications.
+TELEGRAM_API_URL = "https://api.telegram.org"
+NOTIFICATION_TIMEOUT_SECONDS = 30.0
+# Alerts not yet sent are retried on later scans for this long, then dropped.
+PENDING_ALERTS_MAX_AGE = timedelta(hours=24)
+DELIVERIES_DEFAULT_LIMIT = 50
+DELIVERIES_MAX_LIMIT = 500
+
 # Langfuse public API. v2 observations is the only per-trace read path that will survive
 # the removal of `GET /api/public/traces` on Langfuse Cloud.
 LANGFUSE_OBSERVATIONS_PATH = "/api/public/v2/observations"

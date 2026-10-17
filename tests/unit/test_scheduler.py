@@ -10,7 +10,10 @@ from app.core.constants import SYNC_MISFIRE_GRACE
 from app.core.exceptions import TraceSourceError
 from app.domain.models import SyncStatus
 from app.infrastructure.scheduler import (
+    DAILY_REPORT_JOB_ID,
+    INITIAL_DAILY_REPORT_JOB_ID,
     INITIAL_SYNC_JOB_ID,
+    add_daily_report_jobs,
     create_sync_scheduler,
     run_initial_sync,
     run_scheduled_sync,
@@ -138,3 +141,22 @@ async def test_initial_sync_failure_is_logged_not_raised(
     await run_initial_sync(make_service(FailingTraces(TraceSourceError("down"))))
 
     assert "Initial sync failed" in caplog.text
+
+
+@pytest.mark.anyio
+async def test_daily_report_jobs_run_at_the_configured_time_and_at_startup() -> None:
+    class Notifications:
+        async def run_daily_report(self) -> None:
+            """Not called in this test."""
+
+    notifications = Notifications()
+    scheduler = create_sync_scheduler(make_service(), SCHEDULE, MADRID)
+
+    add_daily_report_jobs(scheduler, notifications, time(8, 30), MADRID)  # type: ignore[arg-type]
+
+    jobs = {job.id: job for job in scheduler.get_jobs()}
+    daily, catch_up = jobs[DAILY_REPORT_JOB_ID], jobs[INITIAL_DAILY_REPORT_JOB_ID]
+    assert isinstance(daily.trigger, CronTrigger)
+    assert isinstance(catch_up.trigger, DateTrigger)
+    next_fire = daily.trigger.get_next_fire_time(None, datetime(2026, 12, 1, 9, 0, tzinfo=UTC))
+    assert next_fire == datetime(2026, 12, 2, 7, 30, tzinfo=UTC)  # 08:30 in Madrid (UTC+1)

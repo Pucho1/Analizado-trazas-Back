@@ -149,6 +149,45 @@ Cálculo determinista (sin IA) tras cada escaneo, para cada perfil **activo** (l
 - Secciones: `overview`, `alerts`, `business_events`, `spend_by_profile`, `period_comparison`, `text_volume`. Por defecto el email lleva todas y Telegram `overview`, `alerts` y `business_events`; se cambia con `PUT /reports/settings/{channel}`.
 - «Un día normal» es la mediana diaria de los días anteriores (mínimo 7); si es 0 (días sin uso), la media; si también es 0, no se compara.
 
+## Notificaciones (email y Telegram)
+
+Qué se envía y cuándo:
+
+- **Reporte diario** a las `DAILY_REPORT_TIME` (por defecto 08:30, hora de `MONITORING_TIMEZONE`), sobre el día anterior cerrado. Nunca se envía dos veces el mismo día por el mismo canal (lo garantiza la base de datos). Si falla o el equipo estaba apagado, se reintenta al arrancar y tras cada escaneo posterior.
+- **Alertas** tras cada escaneo: todas las nuevas en **un solo mensaje** por canal. Si no hay alertas, no se envía nada. Si todos los canales fallan, siguen pendientes y se reintentan en el siguiente escaneo (hasta 24 h).
+- **Resumen por escaneo**: opcional por canal, desactivado por defecto.
+- Qué recibe cada canal se cambia con `PUT /api/v1/reports/settings/{channel}` (`enabled`, `sections`, `alerts_enabled`, `scan_summary_enabled`). Un canal sin sus variables en `.env` simplemente no se usa. Un fallo al enviar nunca interrumpe la sincronización; queda en `GET /api/v1/notifications/deliveries`.
+
+### Email (SMTP; ejemplo con Gmail)
+
+1. Activa la **verificación en dos pasos** de tu cuenta de Google.
+2. En https://myaccount.google.com/apppasswords crea una contraseña de aplicación («Observa») y copia los 16 caracteres sin espacios: es `SMTP_PASSWORD` (**no** la contraseña de tu cuenta).
+3. Rellena el `.env` (abajo), reinicia y prueba con `POST /api/v1/notifications/test/email`.
+
+Gmail cierra la conexión, en vez de responder, cuando las credenciales son incorrectas: Observa lo informa como `auth_failed`.
+
+### Telegram
+
+1. En Telegram abre **@BotFather** (con la marca de verificación) y envía `/newbot`. Elige un nombre (`Observa`) y un usuario acabado en `bot`.
+2. Copia el **token** que te da a `TELEGRAM_BOT_TOKEN` (es un secreto) y reinicia el backend.
+3. Abre el chat con tu bot y pulsa **Iniciar** o escríbele algo (sin esto el bot no puede escribirte).
+4. `GET /api/v1/notifications/telegram/chats` muestra tu chat: copia su `id` a `TELEGRAM_CHAT_ID` y reinicia.
+5. Prueba con `POST /api/v1/notifications/test/telegram`.
+
+| Variable             | Descripción                                                              |
+| -------------------- | ------------------------------------------------------------------------ |
+| `DAILY_REPORT_TIME`  | Hora local del reporte diario. Por defecto `08:30`.                      |
+| `SMTP_HOST`          | Servidor SMTP, p. ej. `smtp.gmail.com`.                                  |
+| `SMTP_PORT`          | `587` (STARTTLS, por defecto) o `465` (TLS directo).                     |
+| `SMTP_USERNAME`      | Usuario SMTP (tu dirección de Gmail).                                    |
+| `SMTP_PASSWORD`      | **Secreta.** Contraseña de aplicación.                                   |
+| `EMAIL_FROM`         | Remitente, p. ej. `Observa <tu@gmail.com>`.                              |
+| `EMAIL_TO`           | Destinatario de reportes y alertas.                                      |
+| `TELEGRAM_BOT_TOKEN` | **Secreto.** Token de @BotFather.                                        |
+| `TELEGRAM_CHAT_ID`   | Chat al que escribe el bot (de `GET /notifications/telegram/chats`).     |
+
+No pongas comentarios al final de estas líneas en el `.env`: escribe el valor solo.
+
 ## Arranque
 
 ```bash
@@ -192,6 +231,11 @@ curl "http://127.0.0.1:8000/api/v1/traces/summary?range=7d"
 | `GET /api/v1/reports/sections` | Secciones disponibles.                                                     |
 | `GET` · `PUT /api/v1/reports/settings/{channel}` | Secciones y activación de `email` o `telegram`.            |
 | `GET /api/v1/reports/daily`   | Vista previa del reporte diario (`channel`, `day`; por defecto ayer).        |
+| `POST /api/v1/reports/daily/send` | Envía ya el reporte diario por un canal (`channel`, `day`).             |
+| `GET /api/v1/notifications/channels` | Canales: si están configurados (nunca los secretos) y qué reciben.   |
+| `POST /api/v1/notifications/test/{channel}` | Mensaje de prueba.                                           |
+| `GET /api/v1/notifications/deliveries` | Historial de envíos (`limit`).                                    |
+| `GET /api/v1/notifications/telegram/chats` | Chats que han escrito al bot, para obtener `TELEGRAM_CHAT_ID`. |
 
 Los de trazas aceptan `range` = `24h` (por defecto), `7d` o `30d`.
 
@@ -205,6 +249,9 @@ Errores (`error.code` en el cuerpo):
 - `409` `profile_name_taken`: ya hay un perfil con ese nombre (sin distinguir mayúsculas).
 - `400` `invalid_thresholds`: los umbrales resultantes serían incoherentes (p. ej. aviso ≥ crítico).
 - `400` `unknown_report_section`: la configuración de un canal nombra una sección que no existe.
+- `409` `channel_not_configured`: faltan las variables del canal en `.env`.
+- `409` `report_already_sent`: el reporte de ese día ya llegó por ese canal.
+- `502` `notification_failed`: el proveedor rechazó las credenciales o el destinatario, o no respondió (el mensaje dice cuál).
 - `422`: parámetro o cuerpo inválido (p. ej. `range=1y`, nombre vacío).
 
 ## Calidad

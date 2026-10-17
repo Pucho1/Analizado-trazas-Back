@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from app.application.notification_service import NotificationService
 from app.application.sync_service import SyncService
 from app.core.constants import SYNC_MISFIRE_GRACE
 from app.core.exceptions import ObservaError, SyncAlreadyRunningError
@@ -46,6 +47,31 @@ def create_sync_scheduler(
         )
     scheduler.add_job(run_initial_sync, args=[service], id=INITIAL_SYNC_JOB_ID, name="Initial sync")
     return scheduler
+
+
+DAILY_REPORT_JOB_ID = "daily-report"
+INITIAL_DAILY_REPORT_JOB_ID = "initial-daily-report"
+
+
+def add_daily_report_jobs(
+    scheduler: AsyncIOScheduler, notifications: NotificationService, at: time, timezone: ZoneInfo
+) -> None:
+    """Send the morning report every day at `at` (local), and once at startup.
+
+    The startup run catches up a report missed while the machine was off; both only
+    send what is due and not yet sent, so they never duplicate it.
+    """
+    scheduler.add_job(
+        notifications.run_daily_report,
+        CronTrigger(hour=at.hour, minute=at.minute, timezone=timezone),
+        id=DAILY_REPORT_JOB_ID,
+        name=f"Daily report at {at:%H:%M}",
+    )
+    scheduler.add_job(
+        notifications.run_daily_report,
+        id=INITIAL_DAILY_REPORT_JOB_ID,
+        name="Daily report catch-up",
+    )
 
 
 async def run_scheduled_sync(service: SyncService) -> None:

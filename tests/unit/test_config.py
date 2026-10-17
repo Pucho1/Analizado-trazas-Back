@@ -85,3 +85,42 @@ def test_database_credentials_are_required(missing: str) -> None:
 
     with pytest.raises(ValidationError, match=missing):
         make_settings(**values)
+
+
+def test_channels_are_unconfigured_by_default() -> None:
+    settings = required_plus()
+
+    assert (settings.email_configured, settings.telegram_configured) == (False, False)
+    assert settings.daily_report_time == time(8, 30)
+
+
+def test_email_needs_every_variable() -> None:
+    complete = {
+        "smtp_host": "smtp.gmail.com",
+        "smtp_username": "yo@gmail.com",
+        "smtp_password": "app-password",
+        "email_from": "Observa <yo@gmail.com>",
+        "email_to": "yo@gmail.com",
+    }
+
+    assert required_plus(**complete).email_configured is True
+    for missing in complete:
+        partial = {k: v for k, v in complete.items() if k != missing}
+        assert required_plus(**partial).email_configured is False
+
+
+def test_telegram_needs_token_and_chat_id() -> None:
+    assert required_plus(telegram_bot_token="1:abc").telegram_configured is False
+    assert required_plus(telegram_bot_token="1:abc", telegram_chat_id="42").telegram_configured
+
+
+def test_email_addresses_are_checked() -> None:
+    with pytest.raises(ValidationError, match="not an email address"):
+        required_plus(email_to="nobody")
+
+
+def test_secrets_are_hidden_in_repr() -> None:
+    settings = required_plus(telegram_bot_token="1:SECRET", smtp_password="PASSWORD")
+
+    assert "SECRET" not in repr(settings)
+    assert "PASSWORD" not in repr(settings)

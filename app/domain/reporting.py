@@ -13,11 +13,18 @@ class Channel(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class ChannelSettings:
-    """Whether a channel receives the daily report and with which sections."""
+    """What a channel receives.
+
+    `enabled` turns the daily report on (with `sections` in order); `alerts_enabled`
+    the alerts after each scan; `scan_summary_enabled` a short note after every scan
+    (off by default: silence means everything went well).
+    """
 
     channel: Channel
     enabled: bool
     sections: tuple[str, ...]
+    alerts_enabled: bool = True
+    scan_summary_enabled: bool = False
 
     def __post_init__(self) -> None:
         """Reject repeated sections."""

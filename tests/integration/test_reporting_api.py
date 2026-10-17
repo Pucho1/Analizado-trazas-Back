@@ -160,6 +160,8 @@ def test_sections_and_settings(client: TestClient) -> None:
         "channel": "telegram",
         "enabled": True,
         "sections": ["overview", "alerts", "business_events"],
+        "alerts_enabled": True,
+        "scan_summary_enabled": False,
     }
 
     body = {"enabled": False, "sections": ["alerts"]}

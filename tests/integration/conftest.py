@@ -70,8 +70,9 @@ async def engine(database_url: str) -> AsyncIterator[AsyncEngine]:
 async def _reset(engine: AsyncEngine) -> None:
     """Empty every data table and put the report settings back as the migration seeds them."""
     async with engine.begin() as connection:
-        await connection.execute(text("TRUNCATE profiles, traces, sync_runs CASCADE"))
-        await connection.execute(text("TRUNCATE report_settings"))
+        await connection.execute(
+            text("TRUNCATE profiles, traces, sync_runs, deliveries, report_settings CASCADE")
+        )
         await connection.execute(
             text(
                 "INSERT INTO report_settings (channel, enabled, sections) "

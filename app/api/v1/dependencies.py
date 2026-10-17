@@ -12,6 +12,7 @@ from fastapi import Depends, Request
 
 from app.application.event_service import EventService
 from app.application.monitoring_service import MonitoringService
+from app.application.notification_service import NotificationService
 from app.application.profile_service import ProfileService
 from app.application.reports.service import ReportService
 from app.application.spend_service import SpendService
@@ -67,6 +68,12 @@ def get_event_service(request: Request) -> EventService:
 def get_report_service(request: Request) -> ReportService:
     """Return the report use cases created by the application lifespan."""
     service: ReportService = request.app.state.report_service
+    return service
+
+
+def get_notification_service(request: Request) -> NotificationService:
+    """Return the notification use cases created by the application lifespan."""
+    service: NotificationService = request.app.state.notification_service
     return service
 
 
