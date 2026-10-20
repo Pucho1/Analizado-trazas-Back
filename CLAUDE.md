@@ -61,6 +61,7 @@ backend/
 ├── docker-compose.yml           # PostgreSQL local
 ├── Dockerfile                   # imagen de producción (Railway)
 ├── .dockerignore
+├── Jenkinsfile                  # CI/CD: calidad, Sonar, imagen, Snyk, Docker Hub, Railway
 ├── alembic.ini
 ├── pyproject.toml
 ├── .pre-commit-config.yaml
@@ -98,6 +99,7 @@ backend/
 - **Un solo proceso y una sola réplica**: APScheduler vive dentro del proceso; con más, los escaneos y el reporte diario se duplicarían.
 - Variables en Railway: `POSTGRES_HOST/PORT/USER/PASSWORD/DB` referenciando las del servicio Postgres (`${{Postgres.PGHOST}}`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`), `LANGFUSE_*`, `CORS_ALLOWED_ORIGINS` con la URL del frontend y, si se usan, SMTP y Telegram.
 - Healthcheck: `/openapi.json`.
+- La fuente del servicio en Railway es la imagen `docker.io/pucho1/observa-backend:latest`. El `Jenkinsfile` hace checkout → calidad (Ruff, mypy, pytest en `python:3.14-slim` contra un `postgres:17` temporal; el workspace se copia con `docker cp`, no se monta) → SonarQube → build → Snyk (`snyk container`, no rompe) → push a Docker Hub → `railway redeploy --service observa-backend --yes`. Credenciales de Jenkins: `GitCredentials`, `dockerHub_credentials`, `Snik_credentials` y `RAILWAY_TOKEN` (token de proyecto).
 
 ## Seguridad y configuración
 
