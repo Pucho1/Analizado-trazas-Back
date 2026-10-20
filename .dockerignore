@@ -1,0 +1,27 @@
+# Only what the image needs: pyproject.toml, uv.lock, alembic.ini, app/ and migrations/.
+.git
+.gitignore
+.venv
+**/__pycache__
+**/*.py[cod]
+.mypy_cache
+.ruff_cache
+.pytest_cache
+.coverage
+htmlcov
+.vscode
+.idea
+
+# Secrets never go into the image: Railway injects them as environment variables.
+.env
+.env.*
+
+tests
+docker
+docker-compose.yml
+Dockerfile
+.dockerignore
+.pre-commit-config.yaml
+Jenkinsfile
+*.md
+*.log

@@ -58,7 +58,9 @@ backend/
 ├── migrations/                  # Alembic (env.py, versions/)
 ├── docker/postgres/init/        # crea observa_test al iniciar el volumen
 ├── tests/                       # unit/, integration/
-├── docker-compose.yml
+├── docker-compose.yml           # PostgreSQL local
+├── Dockerfile                   # imagen de producción (Railway)
+├── .dockerignore
 ├── alembic.ini
 ├── pyproject.toml
 ├── .pre-commit-config.yaml
@@ -88,6 +90,14 @@ backend/
 - Cambios de esquema: editar `tables.py` → `uv run alembic revision --autogenerate -m "..."` → revisar → `uv run alembic upgrade head`. Enseñar el esquema antes de crear migraciones. Autogenerate no añade `CHECK` a tablas existentes: escribirlos a mano en la migración.
 - `migrations/env.py` toma la URL de `config.attributes["database_url"]` (tests) o de los `POSTGRES_*` del `.env`; nunca hay credenciales en `alembic.ini`.
 - Host `127.0.0.1`, no `localhost` (en Windows cada conexión tarda ~2 s más).
+
+## Despliegue (Railway)
+
+- `Dockerfile` multi-etapa: `uv sync --frozen --no-dev` en la etapa de build; la final solo lleva Python, `.venv`, `app/`, `migrations/` y `alembic.ini`, con usuario sin privilegios. Ni `.env` ni `tests/` entran en la imagen (`.dockerignore`).
+- Al arrancar: `alembic upgrade head` y después `uvicorn app.main:app` en el puerto `PORT` (por defecto 8000), con `--proxy-headers`.
+- **Un solo proceso y una sola réplica**: APScheduler vive dentro del proceso; con más, los escaneos y el reporte diario se duplicarían.
+- Variables en Railway: `POSTGRES_HOST/PORT/USER/PASSWORD/DB` referenciando las del servicio Postgres (`${{Postgres.PGHOST}}`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`), `LANGFUSE_*`, `CORS_ALLOWED_ORIGINS` con la URL del frontend y, si se usan, SMTP y Telegram.
+- Healthcheck: `/openapi.json`.
 
 ## Seguridad y configuración
 
