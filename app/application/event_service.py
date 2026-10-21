@@ -35,7 +35,7 @@ class EventService:
         return await self._mappings.list_mappings(profile_id)
 
     async def step_names(self, profile_id: int) -> list[StepCount]:
-        """Every named step of the profile's stored traces, most frequent first."""
+        """Every named step of the profile's stored traces, most frequent first. in this file"""
         await self._require(profile_id)
         steps = await self._spend.step_counts(profile_id, None, None)
         return sorted(steps, key=lambda step: (-step.occurrences, step.name, step.level.value))
