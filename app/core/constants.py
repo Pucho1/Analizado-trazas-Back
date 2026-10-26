@@ -5,7 +5,7 @@ from decimal import Decimal
 API_V1_PREFIX = "/api/v1"
 
 # CORS. No login yet, so no credentials.
-CORS_ALLOWED_METHODS = ("GET", "POST", "PATCH", "DELETE")
+CORS_ALLOWED_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
 # A browser origin: scheme, host and optional port; no wildcard, path or trailing slash.
 CORS_ORIGIN_PATTERN = r"https?://[^/\s:*]+(:\d+)?"
 
