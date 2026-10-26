@@ -115,12 +115,16 @@ pipeline {
             }
         }
 
-        stage('Deploy to Railway') {
+       stage('Deploy to Railway') {
             steps {
                 withCredentials([string(credentialsId: 'RAILWAY_TOKEN', variable: 'RAILWAY_TOKEN')]) {
                     // The Railway service uses docker.io/pucho1/observa-backend:latest as its
                     // source; a redeploy pulls the image just pushed.
-                    sh 'npx --yes @railway/cli redeploy --service "$RAILWAY_SERVICE" --yes'
+                    sh '''
+                        docker run --rm -e RAILWAY_TOKEN \
+                            ghcr.io/railwayapp/cli:latest \
+                            railway redeploy --service "$RAILWAY_SERVICE" --yes
+                    '''
                 }
             }
         }
