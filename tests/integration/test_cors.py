@@ -35,7 +35,7 @@ def test_allowed_origin_receives_cors_header(client: TestClient) -> None:
     assert "access-control-allow-credentials" not in response.headers
 
 
-@pytest.mark.parametrize("method", ["GET", "POST", "PATCH", "DELETE"])
+@pytest.mark.parametrize("method", ["GET", "POST", "PUT", "PATCH", "DELETE"])
 def test_preflight_from_allowed_origin_allows_api_methods(client: TestClient, method: str) -> None:
     response = client.options(
         PATH, headers={"Origin": ALLOWED_ORIGIN, "Access-Control-Request-Method": method}
@@ -43,7 +43,7 @@ def test_preflight_from_allowed_origin_allows_api_methods(client: TestClient, me
 
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == ALLOWED_ORIGIN
-    assert response.headers["access-control-allow-methods"] == "GET, POST, PATCH, DELETE"
+    assert response.headers["access-control-allow-methods"] == "GET, POST, PUT, PATCH, DELETE"
 
 
 def test_other_origin_gets_no_cors_header(client: TestClient) -> None:
@@ -61,7 +61,7 @@ def test_preflight_from_other_origin_is_rejected(client: TestClient) -> None:
     assert "access-control-allow-origin" not in response.headers
 
 
-@pytest.mark.parametrize("method", ["PUT", "HEAD"])
+@pytest.mark.parametrize("method", ["HEAD"])
 def test_preflight_for_other_methods_is_rejected(client: TestClient, method: str) -> None:
     response = client.options(
         PATH, headers={"Origin": ALLOWED_ORIGIN, "Access-Control-Request-Method": method}
